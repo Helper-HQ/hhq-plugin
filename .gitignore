@@ -1,0 +1,13 @@
+.DS_Store
+Thumbs.db
+*.log
+
+# Local dev — any test project dirs the plugin writes into
+.hhq/
+.sales-helper/
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
