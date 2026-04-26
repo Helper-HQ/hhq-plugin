@@ -37,7 +37,12 @@ Never log the JWT or licence key in chat output.
 
 ## Locate the CSV(s)
 
-The user may have one or two files from LinkedIn — `Connections.csv` (always) and/or `messages.csv` (if they ticked Messages during onboarding Phase 2).
+LinkedIn ships its data export as a **single `.zip` archive** (they no longer let users pick individual files). The user needs to extract two files from it:
+
+- `Connections.csv` — drives prospect ranking
+- `messages.csv` — drives recent-conversation flagging + voice sampling (optional; the user may have skipped it for privacy)
+
+Everything else in the archive can be ignored.
 
 Files may arrive via:
 1. **Attached to the current chat** — if you can see one or more `.csv` attachments, use them.
@@ -46,11 +51,11 @@ Files may arrive via:
 
 If you cannot find a CSV after a brief check, ask:
 
-> "Drop the CSV(s) in here, or paste the full path. If you ticked Messages too on the LinkedIn export page, drop both files."
+> "Drop the CSV(s) here, or paste the full path. From your LinkedIn archive zip, extract `Connections.csv` and `messages.csv` — those are the two I need."
 
-If the user uploaded a `.zip` (the LinkedIn data archive), tell them:
+If the user uploaded the `.zip` itself (or a folder containing the whole archive), tell them:
 
-> "That's the full archive — I just need `Connections.csv` (and `messages.csv` if you ticked Messages) from inside it. Extract those files and drop them in."
+> "That's the full archive — I can't unzip it for you in V1. Extract `Connections.csv` and `messages.csv` from it and drop those in."
 
 Do NOT attempt to unzip in V1.
 

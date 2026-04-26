@@ -137,30 +137,32 @@ If no → stop politely. If yes → continue.
 
 Do NOT ask further fit-check questions. V1 keeps this minimal.
 
-## Phase 2 — Kick off the LinkedIn export (Connections + Messages)
+## Phase 2 — Kick off the LinkedIn export (full archive)
 
 This goes FIRST in the working portion of onboarding because LinkedIn can take **up to 24 hours** to email the file back. We want the timer running before the deep dive on offer and ICP.
 
-We ask for **both** Connections and Messages in the same export. Connections feed prospect ranking; Messages give the plugin (a) a record of who the user has actually talked to recently — so we don't draft cold openers for ongoing conversations — and (b) authentic voice samples from the user's own outgoing messages.
+LinkedIn no longer lets users pick individual files — they only ship a **full archive** (a `.zip` with everything). That archive contains both `Connections.csv` (drives prospect ranking) and `messages.csv` (drives recent-conversation flagging + voice sampling from outgoing messages), plus a bunch of files we don't care about. The user extracts the two files we want from the zip when the email lands.
 
-> "Right, first thing — let's kick off your LinkedIn export so the clock's running. We'll grab both your connections and your message history in the same request. Want me to walk you through it? (yes / no)"
+> "Right, first thing — let's kick off your LinkedIn data export so the clock's running. LinkedIn ships everything as one big archive these days. Want me to walk you through it? (yes / no)"
 
 If yes, give the steps:
 
-> "Takes about 60 seconds:
+> "Takes about 30 seconds:
 >
 > 1. Go to **linkedin.com/mypreferences/d/download-my-data**
-> 2. Tick **Connections** AND **Messages** (these two — no need for the full archive)
-> 3. Click **Request archive** and confirm with your password
-> 4. LinkedIn will email you when the file is ready (usually a few hours, sometimes up to 24)
+> 2. Choose **Want a copy of all your data?** — LinkedIn no longer lets you pick individual files, so the full archive is the only option.
+> 3. Click **Request archive** and confirm with your password.
+> 4. LinkedIn emails you a `.zip` when it's ready (usually a few hours, sometimes up to 24).
+>
+> When it lands, you'll only need two files from the zip — `Connections.csv` and `messages.csv`. The rest can be ignored.
 >
 > Done? (yes / no)"
 
 If they have any questions, answer briefly. When they confirm done, save `linkedin_export.requested_at: <timestamp>` and continue.
 
-If they're hesitant about messages (privacy, legal, etc.), respect it — say "fine, just tick Connections then" and save `linkedin_export.messages_requested: false` alongside `requested_at`. The plugin works without messages; voice will improve more slowly without them.
+If they're hesitant about messages (privacy, legal, etc.), respect it — tell them to extract only `Connections.csv` from the zip when the time comes, skipping `messages.csv`. Save `linkedin_export.messages_requested: false`. The plugin works without messages; voice will improve more slowly without them.
 
-If they said no to the walkthrough entirely → save `linkedin_export.requested_at: null`. Tell them they can run `ingest-contacts` whenever they have a CSV ready, and continue with the rest of onboarding regardless — offer / ICP / signals are useful work either way.
+If they said no to the walkthrough entirely → save `linkedin_export.requested_at: null`. Tell them they can run `ingest-contacts` whenever they have CSVs ready, and continue with the rest of onboarding regardless — offer / ICP / signals are useful work either way.
 
 Then transition into the deep dive:
 
