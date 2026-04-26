@@ -38,17 +38,18 @@ Use this exact shape. Adapt the active/locked split to the user's tier.
 
 Active skills:
 
-• **onboard-user** — One-time setup. Captures your offer, ICP, and 5 weighted signals; activates your licence; kicks off your LinkedIn export. Triggers when you're new or say "set me up", "re-onboard", "start over".
+• **onboard-user** — One-time setup. Captures your offer + hook + URLs (read inline to build an offer profile), ICP, 5 weighted signals, and voice samples (brand guide, articles, LinkedIn message URLs — read inline to build a voice profile you review and tune); activates your licence; kicks off your LinkedIn export (Connections + Messages). Triggers when you're new or say "set me up", "re-onboard", "start over".
 
-• **ingest-contacts** — Imports your LinkedIn export into your master contact list on the Helper HQ backend. Triggers when you drop a CSV in chat or say "I've got my LinkedIn export", "import my contacts".
+• **ingest-contacts** — Imports your LinkedIn export into your master contact list and message history. Auto-detects Connections.csv and messages.csv. Triggers when you drop a CSV in chat or say "I've got my LinkedIn export", "import my contacts", "import my messages".
+
+• **tune-voice** — Manage your voice profile after onboarding. View, edit do/dont/tone/phrases lists in plain language, add a new source (URL, paste, PDF, DOCX) and re-synthesise, or regenerate from scratch. Triggers on "tune my voice", "show my voice", "add this article to my voice", "regenerate my voice".
 
 • **surface-next-5** — Filters your contacts by your weighted signals and surfaces the top 5 with one-line reasoning. Triggers on "get me the next 5 prospects", "who should I reach out to", "next 5".
 
-• **research-and-draft** — Researches each surfaced prospect via their LinkedIn profile + recent posts, drafts a Greg-style opener for each, saves research and message history to the backend. Triggers on "let's go", "draft them" after surfacing.
+• **research-and-draft** — Researches each prospect via their LinkedIn profile + recent posts, drafts a Greg-style opener using your voice + offer profiles, saves research and message history to the backend. Two entry points: normal flow after surface-next-5 ("let's go", "draft them"), and quick-start flow after onboarding ("let's go on quick start", "research my 5") for the up-to-5 prospects you hand-picked.
 
 Locked — upgrade to unlock:
 
-• **voice-profile** (Pro) — Learns your writing style from past messages so drafted openers sound like you, not like an SDR.
 • **follow-up-drafter** (Pro) — Drafts timed follow-ups for prospects who haven't replied, aware of the original opener.
 • **deep-research** (Pro) — Pulls company news, funding rounds, recent press alongside the LinkedIn profile read.
 • **email-ingest** (Pro) — Ingests Gmail / Outlook contacts in addition to LinkedIn.
@@ -72,8 +73,8 @@ If you're stuck on what to say, just describe what you want to do in plain langu
 
 | Tier | Active | Locked (shown as upgrade) |
 |---|---|---|
-| `lite` | onboard-user, ingest-contacts, surface-next-5, research-and-draft | All Pro and Elite skills above |
-| `pro` | All Lite skills + voice-profile, follow-up-drafter, deep-research, email-ingest | Elite skills above |
+| `lite` | onboard-user, ingest-contacts, tune-voice, surface-next-5, research-and-draft | All Pro and Elite skills above |
+| `pro` | All Lite skills + follow-up-drafter, deep-research, email-ingest | Elite skills above |
 | `elite` | All Lite + Pro skills + apollo-enrich, linkedin-discover | (no locked skills) |
 
 When rendering, only show the **Locked** section if there are actually locked skills for the user's tier. For an Elite user, omit the Locked section entirely.
