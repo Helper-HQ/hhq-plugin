@@ -28,7 +28,7 @@ No weekly cadence. No automation. Run when you want more.
 
 ## Local development
 
-V1 targets Cowork. Bundle the plugin folder into a `.plugin` file and install via Cowork's **Customize → Browse plugins**. To iterate on a skill, edit the relevant `SKILL.md` under `skills/sales-helper/<skill>/`, re-bundle, and reinstall (or use `/reload-plugins` in a CLI session if you have the Claude Code CLI).
+V1 is distributed via the `helper-hq` marketplace at https://github.com/Helper-HQ/claude-plugin. To iterate on a skill, edit the relevant `SKILL.md` under `skills/<skill>/`, commit, push, then run `/plugin marketplace update helper-hq` in your client.
 
 ## Architecture
 

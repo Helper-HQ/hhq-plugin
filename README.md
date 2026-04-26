@@ -52,7 +52,7 @@ helper-hq/claude-plugin/
 │   └── marketplace.json          ← this marketplace
 ├── hhq/                          ← the plugin
 │   ├── .claude-plugin/plugin.json
-│   ├── skills/sales-helper/
+│   ├── skills/                   ← flat, one folder per skill
 │   ├── commands/help.md
 │   └── README.md
 └── README.md                     ← this file
