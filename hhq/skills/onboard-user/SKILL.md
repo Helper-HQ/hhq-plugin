@@ -20,7 +20,7 @@ Trigger when:
 The Helper HQ backend lives at:
 
 ```
-https://fgxrpfqosi.sharedwithexpose.com
+https://hhq-website.test
 ```
 
 This is a Herd / Expose tunnel during V1 dogfood. The URL rotates roughly hourly. If a real user reports it's not reachable, the URL needs to be refreshed in this skill (and in their `.hhq-auth.json`). Production will replace this with a stable domain.
@@ -87,7 +87,7 @@ Write `<project-dir>/.hhq-auth.json`:
 
 ```json
 {
-  "backend_url": "https://fgxrpfqosi.sharedwithexpose.com",
+  "backend_url": "https://hhq-website.test",
   "license_key": "<the licence key>",
   "machine_id": "<the generated UUID>",
   "jwt": "<the token returned by /api/activate>",
