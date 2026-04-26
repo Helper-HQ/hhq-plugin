@@ -184,7 +184,46 @@ Or:
 
 The goal is a one-sentence offer that names what they sell and (ideally) who it's for. Don't grind on it forever — two or three sharpening rounds max. If they can't tighten further, save what they have and move on.
 
-Save the final tightened version verbatim as `offer`. Move directly into Phase 4.
+Save the final tightened version verbatim as `offer`. Move directly into Phase 3b.
+
+## Phase 3b — Offer hook (the angle)
+
+The one-sentence offer says *what* it is. The hook says *why people are leaning in right now*. Capture this — it's the difference between a generic message and one that lands.
+
+> "What's the angle prospects are getting excited about right now? The thing that makes them lean in when you talk about it. One or two sentences."
+>
+> Example: *Cost and cadence — flights are cheap and frequent enough that microgravity testing is suddenly viable on a real timeline. People are starting to think about what they could fly soon.*
+
+**Sharpen if needed.** If they give you something generic ("our quality" / "great service" / "we care about customers"), probe once:
+
+> "More specific — what's *changed recently* about your offer or your market that's making people pay attention? What are they saying when they get on a call with you?"
+
+If they can't articulate it, save what they have and move on. One sharpening round max — don't grind.
+
+Save verbatim as `offer_hook`. Move directly into Phase 3c.
+
+## Phase 3c — Offer URLs (background reading)
+
+> "Drop any URLs that explain your offer better than you'd be able to in chat — product page, pricing, a brochure PDF, recent launch post, anything. Paste them and I'll read them in the background while we keep going. Skip if you don't have any."
+
+Accept space, comma, or newline-separated URLs. Validate each starts with `http://` or `https://`. Trim whitespace. Reject duplicates within the list.
+
+Save the parsed array as `offer_urls`. **Also append each one to `background_queue`** with this shape:
+
+```json
+{
+  "url": "https://...",
+  "purpose": "offer",
+  "added_at": "ISO-8601 timestamp",
+  "status": "pending"
+}
+```
+
+The queue is processed asynchronously — don't try to fetch URLs during onboarding. A future background worker (or opportunistic Chrome MCP fetches in later sessions) will read each, extract canonical phrases / benefits / objection-handling, and store the result back on the profile. Don't block the conversation on this.
+
+If the user pastes nothing or says "skip" / "none" / "no URLs" → save `offer_urls: []` and don't touch `background_queue`. Continue.
+
+Move directly into Phase 4. **No yes/no gate.**
 
 ## Phase 4 — ICP (deep dive)
 
@@ -288,6 +327,16 @@ Build the config payload:
     "continued_after_team_warning": true
   },
   "offer": "verbatim one-sentence offer",
+  "offer_hook": "verbatim 1-2 sentence hook from Phase 3b",
+  "offer_urls": ["https://...", "https://..."],
+  "background_queue": [
+    {
+      "url": "https://...",
+      "purpose": "offer",
+      "added_at": "ISO-8601 timestamp",
+      "status": "pending"
+    }
+  ],
   "icp": {
     "industry": "string",
     "role": "string",
@@ -340,7 +389,8 @@ Then close warmly:
 ## Things you must NOT do
 
 - Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local file is `.hhq-auth.json` in the project folder.
-- Do NOT capture voice profile, business context, or any V2 content here.
+- Do NOT try to fetch URLs from `background_queue` during onboarding. They're for asynchronous processing — just queue them and move on.
+- Do NOT capture voice profile here. That's a separate phase (coming in 0.2.x).
 - Do NOT ask network/source questions beyond LinkedIn — V1 is LinkedIn-CSV only.
 - Do NOT ask about paid sales tools, existing CRMs, or pipeline workflow.
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
