@@ -1,6 +1,6 @@
 ---
 name: onboard-user
-description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer, target prospect, and up to 5 weighted ranking signals while the export cooks. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
+description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (with hook + product URLs), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide, articles, LinkedIn message URLs) while the export cooks. URLs feed a background_queue for async processing. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
 ---
 
 # Onboard User — Sales Helper Lite
@@ -309,7 +309,76 @@ Convert the final ranking to weights (descending: most-important = 5, then 4, 3,
 
 Move directly into Phase 6. Brief acknowledgment.
 
-## Phase 6 — Save and finish
+## Phase 6 — Voice samples
+
+This is the difference between openers that sound like *you* and openers that sound like generic LLM output. The more samples you give me, the better drafts in `research-and-draft` will land. Three short prompts — skip any you don't have, this is gravy on top.
+
+> "Last bit — voice. The more I know how *you* talk, the better the openers I draft will sound like you instead of generic LLM output. Three quick prompts. Skip any you don't have."
+
+### Step 6a — Brand or voice guide
+
+> "Got a brand guide or voice doc? Paste the text directly, drop a URL, or skip."
+
+Three branches:
+
+- **Pasted prose / multiple lines** → save the text verbatim as `voice_samples.brand_guide_text`. Don't queue (text is already in hand).
+- **Single `http(s)://` URL** → save the URL as `voice_samples.brand_guide_url` AND append to `background_queue`:
+
+  ```json
+  {
+    "url": "<the URL>",
+    "purpose": "voice",
+    "source": "brand-guide",
+    "added_at": "ISO-8601",
+    "status": "pending"
+  }
+  ```
+
+- **Skip / "no" / "none"** → save both as `null`. Continue.
+
+### Step 6b — Articles you've written
+
+> "Drop 2–3 URLs of blog posts or articles you've written that sound like you — the pieces where you'd say 'yeah, that's how I talk.' Skip if you don't have any."
+
+Accept space, comma, or newline-separated URLs. Validate each starts with `http://` or `https://`. Trim whitespace. Dedupe within the list. Save as `voice_samples.article_urls: [...]`.
+
+For each article URL, append to `background_queue`:
+
+```json
+{
+  "url": "<URL>",
+  "purpose": "voice",
+  "source": "article",
+  "added_at": "ISO-8601",
+  "status": "pending"
+}
+```
+
+If skip / nothing → save `voice_samples.article_urls: []`. Continue.
+
+### Step 6c — LinkedIn messages that landed
+
+> "Last one — drop 2–3 LinkedIn message URLs where *you* opened a conversation that went well. The plugin will read them in a logged-in Chrome session later to learn your opening style. Skip if you'd rather not share."
+
+Accept LinkedIn message URLs (e.g. `https://www.linkedin.com/messaging/thread/<id>/...`). Validate only that each starts with `http(s)://` and contains `linkedin.com` — LinkedIn message URL shapes vary. Trim and dedupe.
+
+Save as `voice_samples.linkedin_message_urls: [...]`. Append each to `background_queue`:
+
+```json
+{
+  "url": "<URL>",
+  "purpose": "voice",
+  "source": "linkedin-message",
+  "added_at": "ISO-8601",
+  "status": "pending"
+}
+```
+
+If skip / nothing → save `voice_samples.linkedin_message_urls: []`. Continue.
+
+If the user gives nothing across all three steps, that's fine — voice will gradually improve from their own outgoing messages once the LinkedIn messages export ingests (a separate skill). Move directly into Phase 7. **No yes/no gate.**
+
+## Phase 7 — Save and finish
 
 PUT the config to the backend.
 
@@ -329,10 +398,17 @@ Build the config payload:
   "offer": "verbatim one-sentence offer",
   "offer_hook": "verbatim 1-2 sentence hook from Phase 3b",
   "offer_urls": ["https://...", "https://..."],
+  "voice_samples": {
+    "brand_guide_text": "verbatim pasted text or null",
+    "brand_guide_url": "https://... or null",
+    "article_urls": ["https://...", "..."],
+    "linkedin_message_urls": ["https://www.linkedin.com/messaging/...", "..."]
+  },
   "background_queue": [
     {
       "url": "https://...",
-      "purpose": "offer",
+      "purpose": "offer | voice",
+      "source": "brand-guide | article | linkedin-message (omit for offer URLs)",
       "added_at": "ISO-8601 timestamp",
       "status": "pending"
     }
@@ -390,7 +466,7 @@ Then close warmly:
 
 - Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local file is `.hhq-auth.json` in the project folder.
 - Do NOT try to fetch URLs from `background_queue` during onboarding. They're for asynchronous processing — just queue them and move on.
-- Do NOT capture voice profile here. That's a separate phase (coming in 0.2.x).
+- Do NOT pressure for voice samples. Phase 6 is gravy — if the user skips all three steps, that's fine; voice will improve over time from outgoing messages once messages-export ingestion lands.
 - Do NOT ask network/source questions beyond LinkedIn — V1 is LinkedIn-CSV only.
 - Do NOT ask about paid sales tools, existing CRMs, or pipeline workflow.
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
