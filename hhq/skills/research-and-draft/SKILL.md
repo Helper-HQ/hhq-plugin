@@ -1,6 +1,6 @@
 ---
 name: research-and-draft
-description: Researches each prospect in the current batch and drafts a Greg-style opener for each. Triggers when the user says "let's go", "draft them", "start drafting", "go for it", or any equivalent confirmation right after surface-next-5 has presented a batch. Reads /api/me/current-batch (the 5 confirmed prospects from surface-next-5), uses the Chrome connector to read each prospect's LinkedIn profile + recent posts (narrow scope only), saves findings to the prospect's `research` field via PUT /api/me/contacts/{slug}, drafts a short signal-referenced opener, appends it to the prospect's `messages` field, updates each prospect's status to `drafted`, then presents all openers cleanly in chat for the user to copy and send. Run AFTER surface-next-5 has populated the current batch.
+description: Researches each prospect in the current batch and drafts a Greg-style opener for each. Two entry points — (1) normal flow after surface-next-5 ("let's go", "draft them", etc.) reads /api/me/current-batch, (2) quick-start flow after onboard-user ("let's go on quick start", "research my 5") reads config.quick_start.urls and creates contacts on the fly via POST /api/me/contacts/import after profile reads. Both paths use the Chrome connector to read each prospect's LinkedIn profile + recent posts, save findings to the prospect's `research` field via PUT /api/me/contacts/{slug}, draft a short signal-referenced opener, append to the `messages` field, set status to `drafted`, then present all openers cleanly in chat. Run AFTER surface-next-5 (normal) or AFTER onboard-user with quick-start URLs queued.
 ---
 
 # Research and Draft — Sales Helper Lite
@@ -10,6 +10,10 @@ You are doing pass-2 enrichment and opener drafting for the 5 prospects the user
 This is the heaviest V1 skill and it's where the actual product value lives. Work through it carefully — quality of research and quality of drafts is the whole product.
 
 ## When this skill runs
+
+Two entry points: the **normal flow** (after `surface-next-5`) and the **quick-start flow** (after `onboard-user` Phase 7 captured up to 5 LinkedIn profile URLs the user wants to reach out to immediately).
+
+### Normal flow triggers
 
 Trigger when the user says any variant of:
 - "let's go"
@@ -22,7 +26,22 @@ Trigger when the user says any variant of:
 
 …AND `/api/me/current-batch` returns a non-empty batch.
 
-If a user says one of these phrases but the current batch is empty, route them to surface-next-5 first ("There's no current batch — let's surface 5 prospects first. Say 'get me the next 5'.").
+### Quick-start flow triggers
+
+Trigger when the user says any variant of:
+- "let's go on quick start"
+- "do the quick start"
+- "research my 5"
+- "research my quick start"
+- "quick start"
+
+…AND `config.quick_start.urls` is non-empty AND `config.quick_start.status` is `"queued"` (not yet completed).
+
+### Disambiguation
+
+If a phrase like "let's go" is ambiguous (current_batch non-empty AND quick_start.status is "queued"), prefer the **quick-start path** — those URLs were captured most recently and the user is more likely to mean them. After they complete, the user will reach for "let's go" on the normal flow.
+
+If the user says one of the normal-flow phrases but the current batch is empty AND quick_start is unavailable, route them to surface-next-5 first ("There's no current batch — let's surface 5 prospects first. Say 'get me the next 5'.").
 
 ## Phase 0 — Auth
 
@@ -37,6 +56,100 @@ If `jwt_expires_at` is past or within 60s of expiry:
 2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
+
+## Phase Q — Quick-start branch (alternative entry point)
+
+If the user invoked this skill via a quick-start trigger phrase (see "When this skill runs"), run **Phase Q instead of the normal Pre-flight + Phase 1 loop**. Phase Q uses the same research methodology (Phase 2) and drafting methodology (Phase 3) as the normal flow — the difference is the input (URLs, no contacts yet) and what we do at the end (create contacts after research, since they don't exist yet).
+
+### Step Q1 — Read the queued URLs
+
+`GET <backend_url>/api/me/config`
+
+- Read `quick_start.urls` (array of LinkedIn profile URLs).
+- Read `quick_start.status`. If `"completed"` → tell the user "You've already completed quick start — say 'get me the next 5' to surface from your full contact list." Stop.
+- Read `offer`, `offer_hook`, `icp`, `voice_samples`, `signals.weighted` — same fields the normal flow uses for drafting.
+- If `quick_start.urls` is empty/null → tell the user "No quick-start URLs queued. Want to onboard or surface a normal batch?" Stop.
+
+### Step Q2 — Tell the user what's happening
+
+> "Right — researching your `<N>` quick-start prospects and drafting openers. Same methodology as the normal flow. Takes a few minutes; I'll work through them one at a time."
+
+### Step Q3 — Per-URL loop
+
+For each URL in `quick_start.urls`, do the following sequentially:
+
+**Q3a — Read profile via Chrome.** Same as Step 2c in the normal flow. Use `mcp__Claude_in_Chrome__navigate` then `mcp__Claude_in_Chrome__read_page`.
+
+Capture from the profile:
+- First name + last name
+- Headline / current role + company
+- Location
+- About section (only if offer-relevant)
+- Featured / pinned content (if any)
+
+**Q3b — Read recent activity.** Same as Step 2d. URL: `<profile_url>/recent-activity/all/`. Read most recent 5–10 posts.
+
+**Q3c — Analyse (in-context, same as Phase 2 Step 2e).** Apply the methodology in Phase 2 — what to look for, what counts as a signal, how to weight a recent post against a role change. The user picked these prospects intentionally, so the *fit* is presumed; lean into the *recent signal* in the opener.
+
+**Q3d — Draft opener (in-context, same as Phase 3).** Apply the Greg-style methodology in Phase 3 below. Use the user's `voice_samples` (if any have been processed by the background worker) to shape phrasing. Use `offer_hook` for the angle; keep the actual ask soft.
+
+**Q3e — Create the contact via POST.** Now that we have name, company, position from the profile read, create the contact:
+
+```
+POST <backend_url>/api/me/contacts/import
+Content-Type: application/json
+Authorization: Bearer <jwt>
+
+{
+  "contacts": [
+    {
+      "first_name": "...",
+      "last_name": "...",
+      "company": "...",
+      "position": "...",
+      "linkedin_url": "<the URL>",
+      "connected_on": null,
+      "raw_csv": null
+    }
+  ]
+}
+```
+
+The endpoint upserts by `linkedin_url`, so if the prospect later appears in the bulk LinkedIn export, the existing record will be updated rather than duplicated. The response includes the contact's slug — use it for the next step.
+
+**Q3f — Save research and message.**
+
+```
+PUT <backend_url>/api/me/contacts/{slug}
+{
+  "research": { ...the structured research from Q3c... },
+  "messages": [
+    {
+      "kind": "drafted_opener",
+      "drafted_at": "ISO-8601",
+      "body": "<the drafted opener>",
+      "source": "quick_start"
+    }
+  ],
+  "status": "drafted"
+}
+```
+
+If profile read fails for a URL (private, 404, rate-limited), DO NOT crash the batch. Save what you can (URL only as the linkedin_url, status "research_failed"), draft a *generic* opener using only what's visible (the URL itself contains the handle), flag the issue clearly when presenting, and continue.
+
+### Step Q4 — Present openers
+
+Use the same presentation format as Phase 5 in the normal flow. List all `<N>` openers with research summaries, LinkedIn URLs, and notes-file paths. Same Greg-style block per prospect.
+
+### Step Q5 — Mark quick_start completed
+
+`PUT <backend_url>/api/me/config` with the existing config + `quick_start.status` updated to `"completed"` and `quick_start.completed_at` set to the ISO timestamp. The URLs themselves stay in config as a record.
+
+### Step Q6 — Close
+
+> "Done — `<N>` quick-start openers ready. When you've sent any, mark them `contacted` like usual. When your LinkedIn bulk export lands, drop the CSV in and I'll work through the rest of your network from there."
+
+Phase Q ends here. Do NOT continue into Phase 1 — the normal flow doesn't apply.
 
 ## Hollow-skill seams (V1 dogfood)
 

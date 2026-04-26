@@ -1,6 +1,6 @@
 ---
 name: onboard-user
-description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (with hook + product URLs), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide, articles, LinkedIn message URLs) while the export cooks. URLs feed a background_queue for async processing. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
+description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (with hook + product URLs), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide, articles, LinkedIn message URLs) while the export cooks. Optionally captures up to 5 LinkedIn profile URLs as a quick-start batch so the user can get openers drafted before the bulk LinkedIn export arrives. URLs feed a background_queue for async processing. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
 ---
 
 # Onboard User — Sales Helper Lite
@@ -378,7 +378,40 @@ If skip / nothing → save `voice_samples.linkedin_message_urls: []`. Continue.
 
 If the user gives nothing across all three steps, that's fine — voice will gradually improve from their own outgoing messages once the LinkedIn messages export ingests (a separate skill). Move directly into Phase 7. **No yes/no gate.**
 
-## Phase 7 — Save and finish
+## Phase 7 — Quick start (optional)
+
+LinkedIn's export takes hours to a day. While the user waits, they can hand-pick up to 5 prospects they already know they want to reach out to and queue them for immediate research + draft. **Strictly optional** — if they skip, save runs as-is.
+
+> "One last thing before we wrap — LinkedIn's export takes hours. If you've already got people in mind, paste up to 5 LinkedIn profile URLs and I'll queue them for research right after we close out — you'll have openers ready before LinkedIn even ships the bulk export. Or skip and we'll wait for the import. (paste URLs / skip)"
+
+### Parsing
+
+- Accept space, comma, or newline-separated URLs.
+- Validate each starts with `http(s)://` AND contains `linkedin.com/in/`. Reject anything that doesn't (company pages, post URLs, message threads — those aren't profiles).
+- Trim whitespace, dedupe within the list.
+- **Cap at 5.** If the user pastes more, take the first 5 and say honestly: "Saved the first 5 — paste the rest after we work through this batch."
+
+### Save
+
+If at least one valid URL was provided:
+
+```json
+"quick_start": {
+  "urls": ["https://www.linkedin.com/in/...", "..."],
+  "requested_at": "ISO-8601 timestamp",
+  "status": "queued"
+}
+```
+
+If user skips / "no" / "skip" / "none" → save `quick_start: null`. Continue.
+
+If user pastes URLs but none are valid LinkedIn profile URLs → tell them honestly: "None of those looked like LinkedIn profile URLs (they need to look like `linkedin.com/in/<handle>`). Want to retry, or skip?" One retry max — if still nothing valid, save `quick_start: null` and move on.
+
+Do NOT attempt research or drafting in this phase — just queue. The actual research happens when the user invokes `research-and-draft` with a quick-start trigger phrase (handled in that skill).
+
+Move directly into Phase 8. **No yes/no gate.**
+
+## Phase 8 — Save and finish
 
 PUT the config to the backend.
 
@@ -432,6 +465,11 @@ Build the config payload:
   },
   "linkedin_export": {
     "requested_at": "ISO-8601 timestamp or null"
+  },
+  "quick_start": {
+    "urls": ["https://www.linkedin.com/in/...", "..."],
+    "requested_at": "ISO-8601 timestamp",
+    "status": "queued"
   }
 }
 ```
@@ -454,7 +492,19 @@ The `tier` field is set to `"lite"` for V1. Pro and Elite tiers will check this 
 
 Do NOT write any other local files. There is no longer a `contacts/` folder, no `voice-profile.md`, no `business-context.md` — those are V2 and live backend-side when they ship.
 
-Then close warmly:
+Then close warmly. **Two close variants depending on whether Phase 7 captured quick-start URLs:**
+
+**Variant A — quick-start URLs were saved (`config.quick_start.urls.length > 0`):**
+
+> "All set. Your config is saved on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats.
+>
+> Your LinkedIn export is in flight (usually a few hours, sometimes up to 24). And — your `<N>` quick-start prospects are queued. Whenever you're ready, say 'let's go on quick start' and I'll research each, draft an opener, and have them ready to send in a few minutes.
+>
+> When the LinkedIn email lands, open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'.
+>
+> Nice work on the offer and targeting — that's the work that makes the messages I draft next actually land."
+
+**Variant B — no quick-start URLs (`config.quick_start` is null):**
 
 > "All set. Your config is saved on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats.
 >
