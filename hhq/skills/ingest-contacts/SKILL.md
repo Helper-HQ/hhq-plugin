@@ -1,11 +1,11 @@
 ---
 name: ingest-contacts
-description: Imports the user's LinkedIn export into the master contact list. Triggers when the user says they've got their LinkedIn export, drops a CSV file in chat, asks to "import my contacts", or otherwise indicates a LinkedIn export is ready. Parses the Connections CSV (skipping LinkedIn's notes preamble if present), normalises rows, generates a stable per-prospect slug, and idempotently merges into `~/.hhq/sales-helper/contacts-master.csv` — new prospects added as `status: new`, existing prospects updated for mutable fields (company / position) without touching pipeline status or last_surfaced_date. Run AFTER onboard-user. If `~/.hhq/sales-helper/config.json` does not exist, route the user to onboard-user first.
+description: Imports the user's LinkedIn export into the master contact list on the Helper HQ backend. Triggers when the user says they've got their LinkedIn export, drops a CSV file in chat, asks to "import my contacts", or otherwise indicates a LinkedIn export is ready. Parses the Connections CSV (skipping LinkedIn's notes preamble if present), normalises rows, and POSTs them to /api/me/contacts/import — the backend dedupes by linkedin_url, preserves user-added notes/research/messages on existing prospects, and returns counts. Run AFTER onboard-user. If `.hhq-auth.json` does not exist in the project folder, route the user to onboard-user first.
 ---
 
 # Ingest Contacts — Sales Helper Lite
 
-You are importing the user's LinkedIn export into their master contact list. This is a mechanical, transactional skill — one operation, do it cleanly, report honestly. Conversational only at the edges (start and finish).
+You are importing the user's LinkedIn export into their master contact list on the Helper HQ backend. This is a mechanical, transactional skill — one operation, do it cleanly, report honestly. Conversational only at the edges (start and finish).
 
 ## When this skill runs
 
@@ -16,25 +16,24 @@ Trigger when the user:
 
 Do NOT trigger if the user is mid-onboarding or asking general questions about the export process.
 
-## Auth check (V1 stub)
+## Phase 0 — Auth
 
-Before doing anything else, run the auth check.
+Use the `mcp__ccd_directory__request_directory` tool to get the project folder. Save the returned path as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if that tool isn't available (local Claude Code CLI).
 
-For V1 dogfood this is a stub that always returns `true`. When the licence backend ships (Stage 2), this becomes a signed-token verification against the locally stored token. Skill code should call the check, branch on the result, and never run skill logic if it returns `false`.
+Read `<project-dir>/.hhq-auth.json`. If missing → tell the user "Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes." Stop. Do not parse any CSV.
 
-For V1: assume `auth_ok = true` and proceed. Leave a code-comment-style note in your reasoning that this is the auth seam, so future-you knows where to wire the real check.
+Parse the auth file to get `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
 
-## Pre-flight — config check
+If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for the API calls below.
 
-Determine the user-level config directory:
-- Windows: `%USERPROFILE%\.hhq\sales-helper\`
-- macOS / Linux: `~/.hhq/sales-helper/`
+If `jwt_expires_at` has passed (or is within 60 seconds of expiry):
+1. Refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>`, empty body.
+2. On 200: parse the new `token` and `expires_at`, write the updated values back to `.hhq-auth.json` (preserve all other fields), use the new token below.
+3. On 401 `invalid_token` (refresh rejected): re-activate. `POST <backend_url>/api/activate` with `{license_key, machine_id}` from the saved auth file. On 200, save the new token + expires_at to `.hhq-auth.json`. On 403 `license_inactive` or `machine_limit_reached`, tell the user and stop. On any other error, tell the user the backend isn't responding and stop.
 
-If `<user-config-dir>/config.json` does NOT exist:
-- Tell the user they need to run onboarding first ("Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes.").
-- Stop. Do not parse any CSV. Hand off to onboard-user.
+All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk` (the `-k` flag tolerates the Expose tunnel's TLS during dogfood).
 
-If config exists, continue.
+Never log the JWT or licence key in chat output.
 
 ## Locate the CSV
 
@@ -68,7 +67,7 @@ If yes → proceed.
 
 ### Step 1 — Skip LinkedIn's notes preamble
 
-LinkedIn's real Connections.csv has 3+ leading lines starting with `Notes:` and disclaimer text, then a blank line, then the real CSV header. Ash's mock test file does NOT have this preamble. Handle both:
+LinkedIn's real Connections.csv has 3+ leading lines starting with `Notes:` and disclaimer text, then a blank line, then the real CSV header. Mock test files may not have this preamble. Handle both:
 
 - Read lines from the top.
 - The header row is the first row whose first cell is exactly `First Name`.
@@ -99,59 +98,69 @@ For every data row:
 
 1. **Trim whitespace** on every cell.
 2. **Skip the row if** First Name AND Last Name are both empty (LinkedIn occasionally exports blank rows).
-3. **Parse `Connected On`** from `5 Jan 2022` format (DD Mon YYYY) into ISO date `2022-01-05`. If the date is unparseable, store the raw string and flag the row.
-4. **Build the slug** (see "Slug strategy" below).
-5. **Choose the primary key** for dedup:
-   - If `URL` is present and non-empty → use the URL (it's stable per LinkedIn member).
-   - Else → use the slug.
+3. **Parse `Connected On`** from `5 Jan 2022` format (DD Mon YYYY) into ISO date `2022-01-05`. If unparseable, leave it `null` — the backend accepts null.
+4. **Build the row object** for the API:
 
-### Slug strategy
-
-Format: `lastname-firstname-companyhint`
-
-- Lowercase, ASCII-fold (`ñ` → `n`, `é` → `e`, etc.), kebab-case.
-- `companyhint`: take the company name, strip common corporate suffixes (`Pty Ltd`, `Pty`, `Ltd`, `Inc`, `LLC`, `GmbH`, `Limited`, `Corporation`, `Corp`, `Co`), lowercase, kebab-case, max 30 chars. Empty company → `unknown`.
-- Strip non-alphanumeric (except hyphens) from each segment.
-
-Examples:
-- `Greg Coleman` at `Magnetorquer Pty Ltd` → `coleman-greg-magnetorquer`
-- `John Henderson` at `EY` → `henderson-john-ey`
-- `Robert Cook` at `Independent` → `cook-robert-independent`
-- `Martha Alvarez` at `` (empty) → `alvarez-martha-unknown`
-
-Collisions: if a generated slug already exists in the master for a *different* primary-key prospect, append `-2`, `-3`, etc. until unique.
-
-## Idempotent merge with existing master
-
-Read `<user-config-dir>/contacts-master.csv` if it exists. The master has these columns (locked schema for V1):
-
-```
-slug, first_name, last_name, url, email, company, position, connected_on, status, last_surfaced_date, notes
+```json
+{
+  "first_name": "Greg",
+  "last_name": "Smith",
+  "company": "Magnetorquer Pty Ltd",
+  "position": "Founder",
+  "connected_on": "2022-01-05",
+  "linkedin_url": "https://www.linkedin.com/in/coleman-greg",
+  "email": "greg@example.com",
+  "raw_csv": { ...the original row as a key/value object... }
+}
 ```
 
-For each parsed row:
+Optional fields (`linkedin_url`, `email`, `connected_on`) should be `null` when absent. Preserve the original CSV row in `raw_csv` so the backend can re-derive things later.
 
-- **New** (primary key not in master): append with `status: new`, `last_surfaced_date: ""` (empty), `notes: ""`. Increment `new_count`.
-- **Existing** (primary key matches): update only `company`, `position`, and `email` if they've changed. NEVER overwrite `status`, `last_surfaced_date`, or `notes`. If any field changed, increment `updated_count`. If nothing changed, increment `unchanged_count`.
-- **Removed-from-export but still in master**: do NOT delete. They're still real prospects from a prior export. Leave them in place.
+The backend handles slug generation, dedup against existing contacts, and field-change detection. Do NOT compute slugs client-side — that logic now lives server-side in `ContactSlugger`.
 
-Write the master back atomically: write to a temp file in the same directory, then rename to `contacts-master.csv`. This avoids a half-written master if something fails mid-write.
+## Send to the backend
 
-If the master did not exist, create it with the header row above before appending.
+POST the parsed rows in a single request:
+
+```
+POST <backend_url>/api/me/contacts/import
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{
+  "contacts": [ <row 1>, <row 2>, ... ]
+}
+```
+
+Use `curl -sk` via the Bash tool. For very large CSVs (5k+ rows), the JSON body can be a few MB — that's fine for V1. If you hit a request-size limit (`413 Payload Too Large`), tell the user and stop; chunked import is V2.
+
+Expected response (HTTP 200):
+
+```json
+{
+  "created": 142,
+  "updated": 23,
+  "unchanged": 5,
+  "total": 170
+}
+```
+
+Error handling:
+- **HTTP 401** → token wasn't accepted. Run the refresh / re-activate flow from Phase 0 once, then retry the import. If the second try also fails, tell the user their session is broken and to re-onboard.
+- **HTTP 422** → one or more rows failed validation. The error body has `errors.contacts.{idx}.{field}`. Tell the user honestly: "N rows had problems and weren't imported (e.g. row 12: missing first_name). The rest went through if any." Show the first 2-3 indices and field issues. Don't dump the whole error.
+- **HTTP 5xx / network** → tell the user the backend's not responding, suggest retry in a moment. Don't keep retrying automatically.
 
 ## Report honestly
 
-After the merge, give a brief summary in plain language. Match this shape:
+After a successful import, give a brief summary in plain language. Match this shape:
 
 > "Imported `<filename>`.
 >
-> - **`<new_count>` new** prospects added.
-> - **`<updated_count>` updated** (company or position changed).
-> - **`<unchanged_count>` already had** — left untouched.
+> - **`<created>` new** prospects added.
+> - **`<updated>` updated** (company, position, or other CSV-derived fields changed).
+> - **`<unchanged>` already had** — nothing changed.
 >
-> `<flagged_count>` rows had issues — `<short description e.g. 'missing company on 12 rows, unparseable date on 3'>`. They're in the master with what we could parse; you can clean them later if you want.
->
-> Master now has **`<total>` prospects** at `~/.hhq/sales-helper/contacts-master.csv`.
+> Total in your master now: **`<total imported>` from this file** (plus anything from earlier imports).
 >
 > Ready when you are — when you want to start working through them, just say 'get me the next 5 prospects' or similar."
 
@@ -159,22 +168,21 @@ Do NOT echo the full list. Do NOT show example rows.
 
 ## Things you must NOT do
 
-- Do NOT create per-prospect folders (`contacts/<slug>/`) here. That's `surface-next-5`'s job — only prospects we actually surface get folders.
-- Do NOT do any LinkedIn enrichment, profile fetch, or web lookup. Pure CSV-to-master.
-- Do NOT modify `config.json`.
-- Do NOT call any MCP tools or external APIs.
-- Do NOT delete prospects from the master if they're missing from a fresh export.
-- Do NOT overwrite `status`, `last_surfaced_date`, or `notes` on existing prospects, ever.
-- Do NOT write outside `~/.hhq/sales-helper/`.
+- Do NOT write a local `contacts-master.csv` or any contact data to disk. The backend is the master.
+- Do NOT compute slugs, do dedup logic, or merge state client-side. The backend does all of that.
+- Do NOT modify `.hhq-auth.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
+- Do NOT call any other API endpoint or external service.
+- Do NOT delete prospects from the master if they're missing from a fresh export — the backend keeps everything by design (you couldn't delete them even if you tried; the import endpoint is upsert-only).
 - Do NOT attempt to parse `.zip` archives — instruct the user to extract Connections.csv first.
-- Do NOT promise enrichment, deduplication beyond the slug rule, or any V2 behaviour.
+- Do NOT promise enrichment, deduplication beyond what the backend does, or any V2 behaviour.
+- Do NOT log the licence key or JWT in chat.
 
 ## Edge cases to handle gracefully
 
-- **Empty company** → `companyhint = unknown`, slug still works, flag for the user.
-- **Non-ASCII names** (e.g. `Renée Ñuñez`) → ASCII-fold for the slug, keep original in `first_name` / `last_name` columns.
-- **Duplicate full names + same company** in the same export → second one gets `-2` slug suffix.
+- **Empty company** → send `null` for company. The backend slugs from name in that case.
+- **Non-ASCII names** (e.g. `Renée Ñuñez`) → send the original Unicode. The backend handles slugging.
 - **CSV with embedded commas in quoted fields** (e.g. `"Smith, Jr."` as a last name) → use a real CSV parser, not naive split.
 - **CRLF vs LF line endings** → handle both.
 - **BOM at start of file** (Windows-saved CSVs) → strip it before parsing the header.
 - **Column order varies** → match by header name, not position.
+- **5000+ rows** → fine for one POST in V1. The backend processes the whole batch in a single transaction.

@@ -1,11 +1,11 @@
 ---
 name: research-and-draft
-description: Researches each prospect in the current batch and drafts a Greg-style opener for each. Triggers when the user says "let's go", "draft them", "start drafting", "go for it", or any equivalent confirmation right after surface-next-5 has presented a batch. Reads `~/.hhq/sales-helper/current-batch.json` (the 5 confirmed prospects from surface-next-5), uses the Chrome connector to read each prospect's LinkedIn profile + recent posts (narrow scope only), saves findings to `~/.hhq/sales-helper/contacts/<slug>/research.md`, drafts a short signal-referenced opener, saves it to `~/.hhq/sales-helper/contacts/<slug>/messages.md` with timestamp, updates each prospect's status in the master to `drafted`, then presents all openers cleanly in chat for the user to copy and send. Run AFTER surface-next-5 has produced a current-batch.json. If no current-batch.json exists, route the user to surface-next-5 first.
+description: Researches each prospect in the current batch and drafts a Greg-style opener for each. Triggers when the user says "let's go", "draft them", "start drafting", "go for it", or any equivalent confirmation right after surface-next-5 has presented a batch. Reads /api/me/current-batch (the 5 confirmed prospects from surface-next-5), uses the Chrome connector to read each prospect's LinkedIn profile + recent posts (narrow scope only), saves findings to the prospect's `research` field via PUT /api/me/contacts/{slug}, drafts a short signal-referenced opener, appends it to the prospect's `messages` field, updates each prospect's status to `drafted`, then presents all openers cleanly in chat for the user to copy and send. Run AFTER surface-next-5 has populated the current batch.
 ---
 
 # Research and Draft — Sales Helper Lite
 
-You are doing pass-2 enrichment and opener drafting for the 5 prospects the user just confirmed in `surface-next-5`. For each prospect: read their public LinkedIn profile + recent posts via the Chrome connector, capture findings, draft a short signal-referenced opener in the Greg style, save artifacts to per-prospect folders, update the master, present the openers for copying.
+You are doing pass-2 enrichment and opener drafting for the 5 prospects the user just confirmed in `surface-next-5`. For each prospect: read their public LinkedIn profile + recent posts via the Chrome connector, capture findings to the backend, draft a short signal-referenced opener in the Greg style, save artifacts, present the openers for copying.
 
 This is the heaviest V1 skill and it's where the actual product value lives. Work through it carefully — quality of research and quality of drafts is the whole product.
 
@@ -20,64 +20,93 @@ Trigger when the user says any variant of:
 - "yes draft"
 - "give me the openers"
 
-…AND `~/.hhq/sales-helper/current-batch.json` exists with at least one prospect.
+…AND `/api/me/current-batch` returns a non-empty batch.
 
-If a user says one of these phrases but `current-batch.json` doesn't exist, route them to surface-next-5 first ("There's no current batch — let's surface 5 prospects first. Say 'get me the next 5'.").
+If a user says one of these phrases but the current batch is empty, route them to surface-next-5 first ("There's no current batch — let's surface 5 prospects first. Say 'get me the next 5'.").
 
-## Auth check (V1 stub)
+## Phase 0 — Auth
 
-Before doing anything else, run the auth check.
+Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
 
-For V1 dogfood this is a stub that always returns `true`. When the licence backend ships (Stage 2), this becomes a signed-token verification against the locally stored token. Skill code should call the check, branch on the result, and never run skill logic if it returns `false`.
+Read `<project-dir>/.hhq-auth.json`. If missing → "No auth file — say 'set me up' to onboard." Stop.
 
-For V1: assume `auth_ok = true` and proceed. Leave a code-comment-style note in your reasoning that this is the auth seam, so future-you knows where to wire the real check.
+Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
 
-## Hollow-skill seams (V1 stubs)
+If `jwt_expires_at` is past or within 60s of expiry:
+1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-auth.json`.
+2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
 
-This skill has **two** hollow-skill seams that move to server-side MCP calls in V2:
+All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
 
-**Seam A — Research analysis** (`hhq__analyze_research`):
-Takes the raw page-scrape data (profile blob + recent post blobs) and returns a structured `research.md`-shaped finding with signals matched and a "hook for opener" suggestion. The IP is the analysis prompt — *what to look for, what counts as a signal, how to weight a recent post against a role change*, etc.
+## Hollow-skill seams (V1 dogfood)
 
-**Seam B — Opener drafting** (`hhq__draft_opener`):
-Takes the research findings + offer + ICP + voice notes and returns a Greg-style opener. The IP is the drafting prompt — the style guide, the structural rules, the anti-patterns to avoid.
+This skill has **two** hollow-skill seams that move to server-side MCP calls in V2. The endpoints already exist as stubs:
 
-For V1 dogfood you do both yourself in-context. The Greg-style methodology and the analysis heuristics are written below. Treat them as the high-IP content that will live behind the MCP API in V2 — they ship in plaintext today only because we accept that compromise for the dogfood phase.
+**Seam A — Research analysis** (`POST /api/mcp/research_analyze`):
+Takes the raw page-scrape data and returns a structured `research`-shaped finding. The IP is the analysis prompt — *what to look for, what counts as a signal, how to weight a recent post against a role change*, etc.
+
+**Seam B — Opener drafting** (`POST /api/mcp/draft_opener`):
+Takes the research findings + offer + ICP and returns a Greg-style opener. The IP is the drafting prompt — the style guide, the structural rules, the anti-patterns to avoid.
+
+For V1 dogfood you do both yourself in-context. The Greg-style methodology and the analysis heuristics are written below. Treat them as the high-IP content that will live behind the MCP API in V2. Do not call the stub endpoints in V1 — they return placeholder text not yet useful for real drafting.
 
 ## Pre-flight checks
 
-Determine the user-level config directory:
-- Windows: `%USERPROFILE%\.hhq\sales-helper\`
-- macOS / Linux: `~/.hhq/sales-helper/`
+### Step A — Fetch the batch
 
-Check:
-1. **`config.json` exists** with offer + ICP populated. If not → route to onboard-user.
-2. **`current-batch.json` exists** with at least one prospect. If not → route to surface-next-5.
-3. **`contacts-master.csv` exists.** If not → route to ingest-contacts (very unlikely to hit this branch — surface-next-5 would have caught it — but be defensive).
+`GET <backend_url>/api/me/current-batch`
 
-If checks pass, briefly tell the user what's about to happen so they're not staring at a silent screen for 5 minutes:
+- HTTP 200 with non-empty `batch` → continue.
+- HTTP 200 with empty `batch` → tell the user "No active batch — say 'get me the next 5' first." Stop.
+- HTTP 401 → run the auth fallback once and retry.
 
-> "Got it — researching 5 prospects and drafting openers. This takes a few minutes; I'll work through them one at a time and show you everything when I'm done."
+Hold the batch in memory: it's a list of `{contact_id, surfaced_at, drafted_at, reasoning}`.
+
+### Step B — Fetch the user's config
+
+`GET <backend_url>/api/me/config` — you need `offer` and `icp` for the drafting heuristics. If config is missing or incomplete, route to onboard-user.
+
+### Step C — Map contact_ids to slugs
+
+`GET <backend_url>/api/me/contacts?per_page=500` (paginate if total > 500). Build a map `{id → {slug, first_name, last_name, company, position, linkedin_url}}` for the prospects in the batch. You'll use the slug for per-prospect detail GET/PUT.
+
+### Tell the user what's about to happen
+
+Briefly tell the user so they're not staring at a silent screen for 5 minutes:
+
+> "Got it — researching <N> prospects and drafting openers. This takes a few minutes; I'll work through them one at a time and show you everything when I'm done."
 
 Then start the per-prospect loop.
 
 ## Phase 1 — Per-prospect loop (sequential, one at a time)
 
-For each prospect in `current-batch.json`, do Phases 2-4. Sequential is fine for V1 — 5 prospects × ~60-90s each is acceptable. Don't try to parallelise.
+For each prospect in the batch, do Phases 2–4. Sequential is fine for V1 — 5 prospects × ~60-90s each is acceptable. Don't try to parallelise.
 
 After each prospect, give a brief progress note in chat ("✓ 1/5 — Greg Coleman done. Next: Marina Park."). No emoji except the check mark for progress. Keeps the user oriented during the wait.
 
-If a single prospect's research fails (page gone, rate-limit, network error), DO NOT crash the whole batch. Mark that prospect's research.md with `Research failed: <reason>`, attempt the opener using only CSV data (it'll be more generic — flag this in the message log), and move on to the next. Report failures in the final summary.
+If a single prospect's research fails (page gone, rate-limit, network error), DO NOT crash the whole batch. Mark that prospect's `research` JSON with a `failure_reason` field, attempt the opener using only stored contact data (it'll be more generic — flag this in the message log), and move on to the next.
 
-## Phase 2 — Research a single prospect (Chrome connector, narrow scope)
+## Phase 2 — Research a single prospect
 
 For the current prospect:
 
-### Step 2a — Navigate to LinkedIn profile
+### Step 2a — Fetch full contact record
+
+`GET <backend_url>/api/me/contacts/{slug}` to get the latest fields including `linkedin_url`, `email`, `headline`, etc.
+
+### Step 2b — Read local notes if any
+
+Check if `<project-dir>/contacts/<slug>/notes.md` exists. If yes, read it — these are the user's own freeform notes ("Greg's away until Jan", "don't pitch testing — they have an in-house lab"). Use them to shape the opener.
+
+If the file doesn't exist, that's fine — most prospects won't have notes.
+
+Notes live as local files (not on the backend) for V1. The user owns this file; never overwrite it. If you create a placeholder later in this skill (Step 2e), only do so if the file is absent.
+
+### Step 2c — Navigate to LinkedIn profile
 
 Use the Chrome connector tools (`mcp__Claude_in_Chrome__navigate`, then `mcp__Claude_in_Chrome__read_page` or `mcp__Claude_in_Chrome__get_page_text`).
 
-URL: prospect's `url` field from `current-batch.json`. If empty/missing, fall back to a LinkedIn search by name+company — but accept that this is less reliable.
+URL: prospect's `linkedin_url` field. If empty/missing, fall back to a LinkedIn search by name+company — but accept that this is less reliable.
 
 What you read from the profile:
 - Current role + tenure (when did they start the current role?)
@@ -88,20 +117,20 @@ What you read from the profile:
 
 Do NOT read: skills section, endorsements, recommendations, education history beyond current/latest, profile photo, banner. None are useful for the opener and they bloat context.
 
-### Step 2b — Navigate to their recent activity / posts
+### Step 2d — Navigate to recent activity
 
-URL pattern: `<profile-url>/recent-activity/all/` (LinkedIn's standard activity feed).
+URL pattern: `<linkedin_url>/recent-activity/all/`.
 
-Read the most recent 5-10 posts (not all of them). For each:
+Read the most recent 5–10 posts. For each:
 - Date posted
 - Post body (full text — these are usually short)
 - Post type (their own / repost / comment)
 
 If they have no public activity → note that ("No recent posts visible publicly").
 
-### Step 2c — Analyse and write research.md (hollow seam A)
+### Step 2e — Analyse and store research (hollow seam A)
 
-This is **seam A**. In V2 this becomes a server-side MCP call returning a structured analysis. In V1 you do the analysis yourself.
+This is **seam A**. In V2 the analysis becomes a server-side MCP call. In V1 you do the analysis yourself.
 
 Heuristics for analysis:
 
@@ -111,55 +140,56 @@ Heuristics for analysis:
 - **Shipping signals**: did they announce something they built / shipped / launched? Strong hook.
 - **Vulnerability signals**: did they post about a problem they're trying to solve? Strongest possible hook — they've publicly named the pain.
 
-Write `~/.hhq/sales-helper/contacts/<slug>/research.md` using this exact structure:
+Build a research JSON object with this shape:
 
-```markdown
-# Research: <Full Name>
-*Researched <ISO timestamp>*
-
-## Profile snapshot
-- **Role:** <current title> at <current company> (since <start date or "tenure unclear">)
-- **Location:** <city/country if visible, else "not visible">
-- **Previous role:** <if visible, one line>
-
-## Recent activity
-- **Most recent post:** <date> — <one-sentence summary>
-- **Recent themes:** <one or two themes across the last 5-10 posts>
-- **Activity level:** <hot / warm / lukewarm / cold / silent>
-
-## Signals matched
-- <signal name from user's weighted signals>: <one-line evidence, or "not present">
-- <signal name>: <evidence or "not present">
-- <signal name>: <evidence or "not present">
-
-## Hook for opener
-<one sentence — the specific thing the opener should reference. This is the most important field. Pick the strongest, most specific signal. Avoid generic hooks.>
-
-## Notes for the draft
-<anything that should shape the opener — sensitivities, caveats, why this person is a softer/harder ask than usual>
+```json
+{
+  "researched_at": "ISO timestamp",
+  "profile": {
+    "current_role": "Founder",
+    "current_company": "Magnetorquer Pty Ltd",
+    "tenure": "since Jan 2023",
+    "location": "Brisbane, Australia",
+    "previous_role": "Engineer at SatCo (2020-2022)"
+  },
+  "recent_activity": {
+    "most_recent_post": { "date": "2026-04-22", "summary": "Announced shipping the Magnetorquer prototype" },
+    "themes": ["satellite hardware", "team hiring"],
+    "activity_level": "hot"
+  },
+  "signals_matched": [
+    { "signal": "post-relevance", "evidence": "Recent post about Magnetorquer shipping aligns directly with microgravity testing offer" },
+    { "signal": "shipping-signal", "evidence": "Just announced launch — open window for vendor conversations" }
+  ],
+  "hook_for_opener": "Just shipped the Magnetorquer prototype — congratulate, then offer microgravity validation before launch.",
+  "notes_for_draft": "User's local notes mention Greg is travelling — keep ask soft, no pressure on timeline."
+}
 ```
 
-If you couldn't get a profile read at all, the file body is just:
+If you couldn't get a profile read at all, set:
 
-```markdown
-# Research: <Full Name>
-*Researched <ISO timestamp>*
-
-**Research failed:** <reason>
-
-Falling back to CSV-only data for the opener. Expect a more generic draft.
-
-## CSV-known facts
-- Role: <position from CSV>
-- Company: <company from CSV>
-- Connected on: <date>
+```json
+{
+  "researched_at": "ISO timestamp",
+  "failure_reason": "<short reason>",
+  "fallback": true
+}
 ```
 
-Create the directory `~/.hhq/sales-helper/contacts/<slug>/` if it doesn't exist. If `research.md` already exists from a prior surface (re-surfaced after the 30-day cooldown), **append** a new dated section rather than overwriting — preserve the historical research as context.
+PUT the research field for this prospect:
 
-### Step 2d — Create or preserve notes.md
+```
+PUT <backend_url>/api/me/contacts/{slug}
+{
+  "research": <the JSON above>
+}
+```
 
-If `~/.hhq/sales-helper/contacts/<slug>/notes.md` does NOT exist, create it as a placeholder for the user:
+If `research` already has prior data (re-surfaced after the 30-day cooldown), the PUT overwrites. If you want to preserve history, prepend a `previous_runs` array — but for V1 simplicity just overwrite.
+
+### Step 2f — Create notes placeholder (only if absent)
+
+If `<project-dir>/contacts/<slug>/notes.md` does NOT exist, create the directory + placeholder:
 
 ```markdown
 # Notes: <Full Name>
@@ -174,7 +204,7 @@ If notes.md already exists, leave it completely untouched. The user owns this fi
 
 ## Phase 3 — Draft a Greg-style opener (hollow seam B)
 
-This is **seam B**. In V2 this becomes a server-side MCP call returning the opener text. In V1 you do the drafting yourself using the methodology below.
+This is **seam B**. In V2 the drafting becomes a server-side MCP call. In V1 you do it yourself using the methodology below.
 
 ### What a Greg-style opener IS
 
@@ -203,7 +233,7 @@ This is **seam B**. In V2 this becomes a server-side MCP call returning the open
 
 ### Examples
 
-**Good** (illustrative, made up):
+**Good** (illustrative):
 > Hey Greg — saw your post about the attitude control work you're shipping next quarter. We do microgravity component validation at Sunburnt Space; if you're after a final shake-down before launch, happy to chat. No pressure either way.
 
 **Good** (a "they shipped something" hook):
@@ -217,93 +247,112 @@ This is **seam B**. In V2 this becomes a server-side MCP call returning the open
 
 ### Drafting process
 
-1. Re-read the **Hook for opener** field from research.md.
-2. Re-read the user's `offer` from config.json.
-3. Draft using the structure above.
-4. **Self-edit pass:** check it against the IS / IS NOT lists. Cut anything weak. If it could have been written about anyone, rewrite — it must reference *this specific prospect's situation*.
+1. Re-read the `hook_for_opener` field from the research blob.
+2. Re-read the user's `offer` from config.
+3. Read local `notes.md` for the prospect if any — let it shape the draft (e.g. soften the ask if user noted travel; skip the offer if user noted "in-house lab").
+4. Draft using the structure above.
+5. **Self-edit pass:** check it against the IS / IS NOT lists. Cut anything weak. If it could have been written about anyone, rewrite — it must reference *this specific prospect's situation*.
 
 ### If the research failed
 
-Use the CSV-known facts. Be honest in the draft — don't fabricate posts or activity. The opener will be more generic. Example fallback:
+Use the stored contact fields (position, company, headline). Be honest in the draft — don't fabricate posts or activity. The opener will be more generic. Example fallback:
 
 > Hey Tim — noticed we connected a while back. We work with propulsion teams on flight-readiness testing — if it's relevant for your work at Gilmour, happy to share more. Otherwise no pressure.
 
-### Append to messages.md
+### Append the opener to messages
 
-Write or append to `~/.hhq/sales-helper/contacts/<slug>/messages.md`:
+GET the current `messages` array on the contact (you already pulled the full contact in Step 2a; reuse that).
 
-If creating new:
+Append a new entry:
 
-```markdown
-# Messages: <Full Name>
-
-## <ISO date> — Opener (LinkedIn)
-
-<the drafted opener text>
-
----
+```json
+{
+  "drafted_at": "ISO timestamp",
+  "channel": "linkedin",
+  "kind": "opener",
+  "draft": "<the opener text>",
+  "research_failed": false,
+  "user_notes_present": true | false
+}
 ```
 
-If file already exists, append a new `## <ISO date> — Opener (LinkedIn)` section + body + `---` separator at the bottom. Preserve all prior entries.
+PUT the updated messages array:
 
-## Phase 4 — Update master after each prospect
+```
+PUT <backend_url>/api/me/contacts/{slug}
+{
+  "messages": <the appended array>
+}
+```
 
-For the prospect just drafted, update `contacts-master.csv`:
-- `status = drafted`
-- `last_surfaced_date` stays as set by surface-next-5 (don't re-stamp)
+Preserve all prior message entries — append, don't replace.
 
-Atomic write via temp-file-rename, same pattern as ingest-contacts.
+## Phase 4 — Update status after each prospect
 
-Do NOT mark them `contacted` — V1 has no automated send-tracking. The user will manually update statuses (or we add that skill in V2).
+For the prospect just drafted:
 
-## Phase 5 — After all 5 are done — clear the batch and present
+```
+PUT <backend_url>/api/me/contacts/{slug}
+{
+  "status": "drafted"
+}
+```
+
+Don't touch `last_surfaced_at` — surface-next-5 already set it. Don't mark `contacted` — V1 has no automated send-tracking.
+
+## Phase 5 — After all prospects done — clear the batch and present
 
 Once the loop completes:
 
-### Delete or empty current-batch.json
-
-The batch is processed. Delete `~/.hhq/sales-helper/current-batch.json` (or overwrite with `{"version": 1, "prospects": []}`). This way the next `surface-next-5` call doesn't see a stale batch.
-
-### Present all openers in chat
-
-Show all 5 openers cleanly so the user can copy them. Format:
+### Step 5a — Clear the batch
 
 ```
-All done. Here are your 5 openers — copy, tweak if you want, send from LinkedIn:
+PUT <backend_url>/api/me/current-batch
+{ "batch": [] }
+```
+
+This way the next `surface-next-5` call doesn't see a stale batch.
+
+### Step 5b — Present all openers in chat
+
+Show all openers cleanly so the user can copy them. Format:
+
+```
+All done. Here are your <N> openers — copy, tweak if you want, send from LinkedIn:
 
 ═══ 1. Greg Coleman — Founder, Magnetorquer Pty Ltd ═══
 
 <opener text>
 
 LinkedIn: <url>
-Files: ~/.hhq/sales-helper/contacts/coleman-greg-magnetorquer/
+Notes file: <project-dir>/contacts/<slug>/notes.md
 
 ═══ 2. Marina Park — CEO, FlightDeck ═══
 
 <opener text>
 
 LinkedIn: <url>
-Files: ~/.hhq/sales-helper/contacts/park-marina-flightdeck/
+Notes file: <project-dir>/contacts/<slug>/notes.md
 
-... etc for all 5
+... etc
 ```
 
-If any prospect failed research, mark it clearly in their block:
+If any prospect failed research, mark it clearly:
 
 ```
 ═══ 4. Tim Reyes — Senior Propulsion Engineer, Gilmour Space ═══
 
-⚠ Research failed (rate-limited). Opener uses CSV data only — more generic than usual.
+⚠ Research failed (rate-limited). Opener uses stored contact data only — more generic than usual.
 
 <fallback opener text>
 
 LinkedIn: <url>
-Files: ~/.hhq/sales-helper/contacts/reyes-tim-gilmour/
+Notes file: <project-dir>/contacts/<slug>/notes.md
 ```
 
-### Close with a short status nudge
+### Step 5c — Close
 
-> "When you've sent any of these, you can manually mark them `contacted` in `~/.hhq/sales-helper/contacts-master.csv` — V1 doesn't track sends automatically. They're at `drafted` for now and will stay out of the next surface for 30 days regardless.
+> "When you've sent any of these, you can mark them `contacted` by saying 'mark Greg as contacted' — V1 doesn't track sends automatically, but the next surface skips anything in `drafted` for 30 days regardless.
 >
 > When you're ready for the next 5, just say 'get me the next 5'."
 
@@ -312,26 +361,26 @@ Files: ~/.hhq/sales-helper/contacts/reyes-tim-gilmour/
 - Do NOT do anything beyond the prospect's profile + recent posts. No company page deep-dive, no news search, no LinkedIn graph traversal. Narrow.
 - Do NOT log into LinkedIn or attempt any authenticated actions. Public profile reads only.
 - Do NOT fabricate posts, role history, or anything that wasn't actually visible. If research is thin, say so honestly.
-- Do NOT overwrite `notes.md`. Ever. The user owns it.
-- Do NOT overwrite prior entries in `messages.md`. Always append.
-- Do NOT overwrite prior `research.md` content on re-surface. Append a new dated section.
+- Do NOT overwrite local `notes.md`. Ever. The user owns it.
+- Do NOT replace the contact's `messages` array — always append.
 - Do NOT mark prospects `contacted` — V1 has no send tracking.
 - Do NOT use emoji in opener drafts.
 - Do NOT use exclamation marks in opener drafts (unless mirroring the user's voice in a future tier).
 - Do NOT pitch in the opener. Soft ask only.
-- Do NOT promise to "send a follow-up" automatically — V1 has no follow-up automation.
-- Do NOT call any external API beyond the Chrome connector tools.
-- Do NOT write outside `~/.hhq/sales-helper/`.
-- Do NOT touch `config.json`.
+- Do NOT call the `/api/mcp/*` endpoints in V1 — leave them as documented seams. V1 does research + drafting in-context.
+- Do NOT modify `.hhq-auth.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT log the JWT, licence key, or auth file contents.
+- Do NOT touch the user's config.
 
 ## Edge cases to handle gracefully
 
-- **Profile is private / "Out of network"** → research fails, fall back to CSV data, flag in the opener block.
+- **Profile is private / "Out of network"** → research fails, fall back to stored contact data, flag in the opener block.
 - **No recent posts** → activity level = silent, hook from role/company match instead. Be honest in the opener — no fake "saw your recent post" reference.
-- **Profile URL is wrong / 404** → mark research failed, fall back to CSV data, suggest the user verify the LinkedIn URL.
-- **Prospect's company in CSV differs from current LinkedIn profile** (they changed jobs since the export) → research finds a new company. Update the master with new company + position. Use the new company in the opener.
+- **Profile URL is wrong / 404** → mark research failed, fall back, suggest the user verify the LinkedIn URL.
+- **Prospect's company in the contact record differs from current LinkedIn profile** (they changed jobs since the export) → research finds a new company. PUT a single update with both the research and the corrected `company` / `position` fields.
 - **Rate-limited mid-batch** → mark remaining prospects as research-failed, fall back, finish the batch. Don't retry mid-flight (it'll just re-rate-limit).
-- **Single-name profile** (no last name) → slug uses what's available, e.g. `cher--cher-records`. Don't crash.
-- **Two prospects in batch with the same name** (unlikely but possible) → slugs are already different from ingest-contacts (collision suffix), so files don't collide. Just process both normally.
-- **`current-batch.json` is malformed** → tell the user and route to surface-next-5 to regenerate.
-- **User interrupts mid-batch** ("stop", "pause", "wait") → finish the current prospect cleanly (don't leave half-written files), then stop. The batch.json still reflects the original 5; the user can re-trigger to resume processing the unfinished ones (you can detect which prospects already have a recent research.md and skip those).
+- **Single-name profile** (no last name) → use what's available. Slug already handled by ingest-contacts (which delegates to backend).
+- **Two prospects in batch with the same name** (unlikely) → slugs differ (server-side disambiguation), so notes files don't collide.
+- **`/api/me/current-batch` is empty mid-flow** → another session may have cleared it. Tell the user honestly and suggest re-surfacing.
+- **User interrupts mid-batch** ("stop", "pause", "wait") → finish the current prospect cleanly (don't leave a half-PUT contact), then stop. The current-batch on the backend still reflects the original 5 with `drafted_at` set on the ones you finished. The user can re-trigger this skill — check each contact's `messages` field for a recent opener entry to skip already-done prospects.
+- **Backend down mid-batch** → if Chrome research succeeded but the PUT fails, you have research data you can't persist. Hold it in conversation context, surface a partial result honestly, suggest retry.

@@ -1,40 +1,107 @@
 ---
 name: onboard-user
-description: One-time setup for the Sales Helper Lite plugin. Kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer, target prospect, and up to 5 weighted ranking signals while the export cooks. Saves to `~/.hhq/sales-helper/config.json`. Use this when a user first interacts with Sales Helper, when no config exists, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
+description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer, target prospect, and up to 5 weighted ranking signals while the export cooks. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
 ---
 
 # Onboard User — Sales Helper Lite
 
-You are running the one-time setup for the Sales Helper Lite plugin. You kick off the user's LinkedIn export first (because LinkedIn takes up to 24 hours to email it back), then dial in their offer, their target prospect profile, and weights for up to 5 ranking signals while the export cooks. You then save everything to `~/.hhq/sales-helper/config.json`.
+You are running the one-time setup for the Sales Helper Lite plugin. You activate the user's licence against the Helper HQ backend, kick off their LinkedIn export first (because LinkedIn takes up to 24 hours to email it back), then dial in their offer, target prospect, and signal weights while the export cooks. You save everything to the backend via the API.
 
-This is the user's FIRST experience of the plugin. Be warm, brief, and conversational. Total target time: 15 minutes — most of it is the offer + ICP + signals deep dive. The LinkedIn step is fast.
+This is the user's FIRST experience of the plugin. Be warm, brief, and conversational. Total target time: 15 minutes — most of it is the offer + ICP + signals deep dive. Activation and the LinkedIn step are fast.
 
 ## When this skill runs
 
 Trigger when:
-- No `~/.hhq/sales-helper/config.json` exists and the user is interacting with Sales Helper for the first time, or
+- No `.hhq-auth.json` exists in the project folder and the user is interacting with Sales Helper for the first time, or
 - The user explicitly asks to re-onboard, reset, reconfigure, or "start over."
 
-## Auth check (V1 stub)
+## Backend URL (V1 dogfood)
 
-Before doing anything else, run the auth check.
+The Helper HQ backend lives at:
 
-For V1 dogfood this is a stub that always returns `true`. When the licence backend ships (Stage 2), this becomes a signed-token verification against the locally stored token. Skill code should call the check, branch on the result, and never run skill logic if it returns `false`.
+```
+https://owsomotvml.sharedwithexpose.com
+```
 
-For V1: assume `auth_ok = true` and proceed. Leave a code-comment-style note in your reasoning that this is the auth seam, so future-you knows where to wire the real check.
+This is a Herd / Expose tunnel during V1 dogfood. The URL rotates roughly hourly. If a real user reports it's not reachable, the URL needs to be refreshed in this skill (and in their `.hhq-auth.json`). Production will replace this with a stable domain.
 
-## Before you start — check config state
+## Phase 0 — Backend activation
 
-Determine the user-level config directory:
-- Windows: `%USERPROFILE%\.hhq\sales-helper\`
-- macOS / Linux: `~/.hhq/sales-helper/`
+This phase has to happen first, before anything else, because the rest of onboarding writes to the backend.
 
-If `<user-config-dir>/config.json` already exists:
-- Tell them they're already onboarded and ask: "Re-run onboarding and overwrite your setup? (yes / no)"
-- If no → stop. If they want to do something specific (refresh signals, change offer), note that V1 doesn't have partial-update skills yet — full re-run is the only path.
-- If yes → continue.
+### Step 0a — Get the project folder
 
-Otherwise: create the directory and proceed.
+Use the `mcp__ccd_directory__request_directory` tool to get a path to the persistent project folder. The user will accept a permission prompt the first time.
+
+Save the returned path as `<project-dir>` for the rest of this skill. All subsequent file reads and writes go inside that path.
+
+If the tool isn't available (e.g. running in local Claude Code CLI rather than Cowork), fall back to `~/.hhq/sales-helper/` and create it if missing. Document this fallback in a comment-style note.
+
+### Step 0b — Check for an existing auth file
+
+If `<project-dir>/.hhq-auth.json` already exists:
+- Tell the user they've already activated and ask: "Re-run onboarding and overwrite your setup? (yes / no)"
+- If no → stop. If they want a partial change (refresh signals only, change offer), note that V1 doesn't have partial-update skills — full re-run is the only path.
+- If yes → continue. Keep the existing licence_key as the default for re-activation but allow the user to paste a different one.
+
+If no auth file → continue.
+
+### Step 0c — Get the licence key
+
+Ask the user:
+
+> "First, paste your Helper HQ licence key. It looks like `hhq_...` and you got it in your purchase email."
+
+Validate the shape: starts with `hhq_`, length at least 16 chars. If invalid, ask again with a brief explanation.
+
+### Step 0d — Activate
+
+Generate a UUIDv4 as the machine_id. Use `powershell -NoProfile -c '[guid]::NewGuid().ToString()'` on Windows or `uuidgen` on Mac/Linux. Strip any whitespace.
+
+Call the backend:
+
+```
+POST <backend-url>/api/activate
+Content-Type: application/json
+
+{
+  "license_key": "<the licence key the user pasted>",
+  "machine_id": "<the generated UUID>"
+}
+```
+
+Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool. The `-k` flag is needed during dogfood because Expose's TLS cert may not validate cleanly.
+
+Handle the response:
+
+- **HTTP 200** → parse the JSON. Save `.hhq-auth.json` (Step 0e) and continue.
+- **HTTP 404 `license_not_found`** → the licence key is wrong. Ask the user to re-paste from their purchase email. Loop back to Step 0c.
+- **HTTP 403 `license_inactive`** → the licence has been revoked, suspended, or expired. Tell the user to contact support at `help@helperhq.co` and stop.
+- **HTTP 403 `machine_limit_reached`** → the user has activated this licence on 3 machines / projects already. Tell them: "Your licence is at its 3-machine limit. Sales Helper is designed to be run from one project — opening a new project counts as a new machine. Contact help@helperhq.co if you need to migrate." Stop.
+- **HTTP 422** → validation error, very unlikely with our generated input. Show the error and stop.
+- **Network error or non-JSON response** → tell the user the backend isn't reachable, give them the URL, and stop. Don't write a partial auth file.
+
+### Step 0e — Save the auth file
+
+Write `<project-dir>/.hhq-auth.json`:
+
+```json
+{
+  "backend_url": "https://owsomotvml.sharedwithexpose.com",
+  "license_key": "<the licence key>",
+  "machine_id": "<the generated UUID>",
+  "jwt": "<the token returned by /api/activate>",
+  "jwt_expires_at": "<the expires_at returned by /api/activate>",
+  "tier": "<the tier returned by /api/activate (lite|pro|elite)>",
+  "helpers": ["<the helpers array returned by /api/activate>"]
+}
+```
+
+Also update `tier` and `helpers` in the auth file every time you refresh or re-activate, since they could change if the user upgrades tier or has a helper added to their licence.
+
+This file is the canonical place for auth state across all four V1 skills. Other skills read it on every invocation.
+
+If the user is re-onboarding (existing auth file), overwrite it.
 
 ## Conversational style
 
@@ -47,9 +114,9 @@ Otherwise: create the directory and proceed.
 
 ## The intro
 
-Before the first question, give a short intro:
+Run the intro AFTER Phase 0 succeeds, so the user knows their licence activated cleanly before you start the deep dive.
 
-> "Welcome to Sales Helper Lite. Here's what I do: I look across your LinkedIn connections and surface 5 prospects at a time worth a personal opener — based on real signals like recent posts, role changes, or things they've shipped. Then I draft a short, specific opening message for each, you review and send. The magic is in the messages; sending is the easy part.
+> "Welcome to Sales Helper Lite. Your licence is active. Here's what I do: I look across your LinkedIn connections and surface 5 prospects at a time worth a personal opener — based on real signals like recent posts, role changes, or things they've shipped. Then I draft a short, specific opening message for each, you review and send. The magic is in the messages; sending is the easy part.
 >
 > First step is kicking off your LinkedIn connections export — LinkedIn takes up to a day to email it back, so we want that timer running. While it's cooking we'll dial in your offer and your target prospect so the messages I draft for you land specifically. About 15 minutes in total.
 >
@@ -205,7 +272,11 @@ Move directly into Phase 6. Brief acknowledgment.
 
 ## Phase 6 — Save and finish
 
-Write `<user-config-dir>/config.json` with this shape:
+PUT the config to the backend.
+
+Read `<project-dir>/.hhq-auth.json` to get `backend_url` and `jwt`.
+
+Build the config payload:
 
 ```json
 {
@@ -240,26 +311,39 @@ Write `<user-config-dir>/config.json` with this shape:
 }
 ```
 
+Call:
+
+```
+PUT <backend_url>/api/me/config
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{ "config": <the payload above> }
+```
+
+Expect HTTP 200 with the saved config echoed back. If the call fails:
+- **HTTP 401** → JWT is bad somehow. Tell the user their session expired, ask them to re-run onboarding. Stop.
+- **HTTP 5xx or network error** → tell the user the backend's not responding right now, suggest they retry in a moment. Don't lose the answers — keep them in conversation context so a retry can re-PUT.
+
 The `tier` field is set to `"lite"` for V1. Pro and Elite tiers will check this field at runtime to gate features when they ship.
 
-Also create the directory `<user-config-dir>/contacts/` (empty — folders are added per-prospect later).
-
-Do NOT create `voice-profile.md`, `business-context.md`, or any pipeline / messages files. Those are V2.
+Do NOT write any other local files. There is no longer a `contacts/` folder, no `voice-profile.md`, no `business-context.md` — those are V2 and live backend-side when they ship.
 
 Then close warmly:
 
-> "All set. Your config is saved at `~/.hhq/sales-helper/config.json` — open it any time and tweak.
+> "All set. Your config is saved on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats.
 >
-> Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
+> Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
 >
 > Nice work on the offer and targeting — that's the work that makes the messages I draft next actually land."
 
 ## Things you must NOT do
 
+- Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local file is `.hhq-auth.json` in the project folder.
 - Do NOT capture voice profile, business context, or any V2 content here.
 - Do NOT ask network/source questions beyond LinkedIn — V1 is LinkedIn-CSV only.
 - Do NOT ask about paid sales tools, existing CRMs, or pipeline workflow.
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
-- Do NOT write anything outside `~/.hhq/sales-helper/`.
 - Do NOT promise weekly cadence — V1 is on-demand only.
 - Do NOT promise Pro or Elite features. The `tier` field exists for forward compatibility, but V1 is Lite-only.
+- Do NOT log the licence key, JWT, or any contents of `.hhq-auth.json` in chat output. Those are secrets.
