@@ -67,7 +67,7 @@ If the user invoked this skill via a quick-start trigger phrase (see "When this 
 
 - Read `quick_start.urls` (array of LinkedIn profile URLs).
 - Read `quick_start.status`. If `"completed"` → tell the user "You've already completed quick start — say 'get me the next 5' to surface from your full contact list." Stop.
-- Read `offer`, `offer_hook`, `icp`, `voice_samples`, `signals.weighted` — same fields the normal flow uses for drafting.
+- Read `offer`, `offer_hook`, `offer_profile`, `icp`, `voice_profile`, `signals.weighted` — same fields the normal flow uses for drafting.
 - If `quick_start.urls` is empty/null → tell the user "No quick-start URLs queued. Want to onboard or surface a normal batch?" Stop.
 
 ### Step Q2 — Tell the user what's happening
@@ -91,7 +91,7 @@ Capture from the profile:
 
 **Q3c — Analyse (in-context, same as Phase 2 Step 2e).** Apply the methodology in Phase 2 — what to look for, what counts as a signal, how to weight a recent post against a role change. The user picked these prospects intentionally, so the *fit* is presumed; lean into the *recent signal* in the opener.
 
-**Q3d — Draft opener (in-context, same as Phase 3).** Apply the Greg-style methodology in Phase 3 below. Use the user's `voice_samples` (if any have been processed by the background worker) to shape phrasing. Use `offer_hook` for the angle; keep the actual ask soft.
+**Q3d — Draft opener (in-context, same as Phase 3).** Apply the Greg-style methodology in Phase 3 below. Use the user's `voice_profile` (summary, do/dont, phrases) to shape phrasing — match their tone, follow the do/don't rules, optionally riff on a sound-check phrase. Use `offer_hook` and `offer_profile.canonical_phrases` for the angle and language; keep the actual ask soft.
 
 **Q3e — Create the contact via POST.** Now that we have name, company, position from the profile read, create the contact:
 
@@ -177,7 +177,12 @@ Hold the batch in memory: it's a list of `{contact_id, surfaced_at, drafted_at, 
 
 ### Step B — Fetch the user's config
 
-`GET <backend_url>/api/me/config` — you need `offer` and `icp` for the drafting heuristics. If config is missing or incomplete, route to onboard-user.
+`GET <backend_url>/api/me/config` — read `offer`, `offer_hook`, `offer_profile`, `icp`, `voice_profile`, and `signals.weighted`. The drafting heuristics in Phase 3 below use all of these:
+- `offer` + `offer_hook` + `offer_profile.canonical_phrases` shape the offer language and angle.
+- `voice_profile.summary` + `do` + `dont` + `phrases` shape the user's voice — match their tone and follow the rules.
+- `icp` + `signals.weighted` shape what counts as a relevant signal.
+
+If config is missing or incomplete (no `offer` at minimum), route to onboard-user. Missing `voice_profile` or `offer_profile` is fine — fall back to a more generic style and note it in the result block honestly ("voice not yet tuned — generic phrasing").
 
 ### Step C — Map contact_ids to slugs
 

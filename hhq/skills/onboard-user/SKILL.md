@@ -1,6 +1,6 @@
 ---
 name: onboard-user
-description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn connections export FIRST (because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (with hook + product URLs), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide, articles, LinkedIn message URLs) while the export cooks. Optionally captures up to 5 LinkedIn profile URLs as a quick-start batch so the user can get openers drafted before the bulk LinkedIn export arrives. URLs feed a background_queue for async processing. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft.
+description: One-time setup for the Sales Helper Lite plugin. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn export FIRST (Connections + Messages, because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (one-sentence + hook + URLs read inline to distil an offer_profile), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide as text/URL/PDF/DOCX, articles, LinkedIn message URLs — read inline to distil a voice_profile the user reviews and tunes). Optionally captures up to 5 LinkedIn profile URLs as a quick-start batch so the user can get openers drafted before the bulk LinkedIn export arrives. Saves to the backend via PUT /api/me/config. Use this when a user first interacts with Sales Helper, when no auth file exists in the project folder, or when the user explicitly asks to re-onboard, reset, or reconfigure their setup. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft. For ongoing voice tuning AFTER onboarding, use tune-voice instead.
 ---
 
 # Onboard User — Sales Helper Lite
@@ -206,28 +206,51 @@ If they can't articulate it, save what they have and move on. One sharpening rou
 
 Save verbatim as `offer_hook`. Move directly into Phase 3c.
 
-## Phase 3c — Offer URLs (background reading)
+## Phase 3c — Offer URLs (read + distil now)
 
-> "Drop any URLs that explain your offer better than you'd be able to in chat — product page, pricing, a brochure PDF, recent launch post, anything. Paste them and I'll read them in the background while we keep going. Skip if you don't have any."
+> "Drop any URLs that explain your offer better than you'd be able to in chat — product page, pricing, a brochure, recent launch post, anything. I'll read them now and pull out the key benefits and canonical phrases so I can echo your language when I draft openers. Skip if you don't have any."
 
-Accept space, comma, or newline-separated URLs. Validate each starts with `http://` or `https://`. Trim whitespace. Reject duplicates within the list.
+Accept space, comma, or newline-separated URLs. Validate each starts with `http://` or `https://`. Trim whitespace, dedupe.
 
-Save the parsed array as `offer_urls`. **Also append each one to `background_queue`** with this shape:
+If the user pastes nothing / "skip" / "none" → save `offer_profile: null` and move directly into Phase 4.
+
+If they give URLs, run the synthesis pass before moving on.
+
+### Step 3c.1 — Tell the user what's happening
+
+> "Reading those now — back in a minute."
+
+### Step 3c.2 — Fetch each URL
+
+For each URL:
+- Use `WebFetch` (or `mcp__Claude_in_Chrome__navigate` + `read_page` if a site blocks plain HTTP fetches — Sunburnt-style marketing sites are usually fine with WebFetch).
+- If a fetch fails (404, timeout, blocked), note the failure and continue with the rest. Don't crash the phase.
+
+### Step 3c.3 — Distil into offer_profile
+
+Pull out, from everything you read:
+- **`summary`** — 1–3 sentences on what the offer is and the angle that lands.
+- **`key_benefits`** — short phrases the company uses, verbatim where possible.
+- **`objection_patterns`** — common concerns the pages address (price, timing, complexity, etc.).
+- **`canonical_phrases`** — distinctive wording worth echoing in openers.
+
+Save as `offer_profile`:
 
 ```json
 {
-  "url": "https://...",
-  "purpose": "offer",
-  "added_at": "ISO-8601 timestamp",
-  "status": "pending"
+  "summary": "...",
+  "key_benefits": ["...", "..."],
+  "objection_patterns": ["...", "..."],
+  "canonical_phrases": ["...", "..."],
+  "sources": ["https://...", "..."],
+  "failed_sources": ["https://..."],
+  "generated_at": "ISO-8601 timestamp"
 }
 ```
 
-The queue is processed asynchronously — don't try to fetch URLs during onboarding. A future background worker (or opportunistic Chrome MCP fetches in later sessions) will read each, extract canonical phrases / benefits / objection-handling, and store the result back on the profile. Don't block the conversation on this.
+**Do NOT save the page contents themselves anywhere.** Distil and forget. The profile is the only persistent artifact.
 
-If the user pastes nothing or says "skip" / "none" / "no URLs" → save `offer_urls: []` and don't touch `background_queue`. Continue.
-
-Move directly into Phase 4. **No yes/no gate.**
+Move directly into Phase 4. **No yes/no gate.** Brief acknowledgment of what you found — one line, naming the angle and a benefit or two.
 
 ## Phase 4 — ICP (deep dive)
 
@@ -313,74 +336,126 @@ Convert the final ranking to weights (descending: most-important = 5, then 4, 3,
 
 Move directly into Phase 6. Brief acknowledgment.
 
-## Phase 6 — Voice samples
+## Phase 6 — Voice (gather + synthesise + tune)
 
-This is the difference between openers that sound like *you* and openers that sound like generic LLM output. The more samples you give me, the better drafts in `research-and-draft` will land. Three short prompts — skip any you don't have, this is gravy on top.
+This is the difference between openers that sound like *you* and openers that sound like generic LLM output. We gather samples, synthesise them into a structured voice profile, and let you tune it before saving. The user can also retune anytime later via the `tune-voice` skill.
 
-> "Last bit — voice. The more I know how *you* talk, the better the openers I draft will sound like you instead of generic LLM output. Three quick prompts. Skip any you don't have."
+> "Last bit — voice. The more I know how *you* talk, the better drafts will sound like you instead of a generic LLM. I'll gather a few examples, then read everything and pull out a voice profile you can review. About 2-3 minutes once we hit the read step."
 
 ### Step 6a — Brand or voice guide
 
-> "Got a brand guide or voice doc? Paste the text directly, drop a URL, or skip."
+> "Got a brand guide or voice doc? Paste the text directly, drop a URL, attach a PDF or Word file, or skip."
 
-Three branches:
+Three branches based on what they give you:
 
-- **Pasted prose / multiple lines** → save the text verbatim as `voice_samples.brand_guide_text`. Don't queue (text is already in hand).
-- **Single `http(s)://` URL** → save the URL as `voice_samples.brand_guide_url` AND append to `background_queue`:
-
-  ```json
-  {
-    "url": "<the URL>",
-    "purpose": "voice",
-    "source": "brand-guide",
-    "added_at": "ISO-8601",
-    "status": "pending"
-  }
-  ```
-
-- **Skip / "no" / "none"** → save both as `null`. Continue.
+- **Pasted prose / multiple lines** — capture the text verbatim. Hold in skill memory as `gathered.brand_guide_text`. Don't persist yet.
+- **Single `http(s)://` URL** — hold as `gathered.brand_guide_url` (will be fetched in Step 6.5).
+- **Attached file (`.pdf` / `.docx` / `.txt`)** — read the file inline using the `pdf` skill (for PDFs), `docx` skill (for Word), or direct read (for txt). Extract the text. Hold as `gathered.brand_guide_text` (the extracted content). **Do NOT save the file anywhere — content only.**
+- **Skip** — hold as null.
 
 ### Step 6b — Articles you've written
 
 > "Drop 2–3 URLs of blog posts or articles you've written that sound like you — the pieces where you'd say 'yeah, that's how I talk.' Skip if you don't have any."
 
-Accept space, comma, or newline-separated URLs. Validate each starts with `http://` or `https://`. Trim whitespace. Dedupe within the list. Save as `voice_samples.article_urls: [...]`.
-
-For each article URL, append to `background_queue`:
-
-```json
-{
-  "url": "<URL>",
-  "purpose": "voice",
-  "source": "article",
-  "added_at": "ISO-8601",
-  "status": "pending"
-}
-```
-
-If skip / nothing → save `voice_samples.article_urls: []`. Continue.
+Accept space/comma/newline-separated URLs. Validate `http(s)://`. Dedupe. Hold as `gathered.article_urls: [...]`.
 
 ### Step 6c — LinkedIn messages that landed
 
-> "Last one — drop 2–3 LinkedIn message URLs where *you* opened a conversation that went well. The plugin will read them in a logged-in Chrome session later to learn your opening style. Skip if you'd rather not share."
+> "Last one — drop 2–3 LinkedIn message URLs where *you* opened a conversation that went well. I'll read them in your logged-in Chrome session and learn your opening style. Skip if you'd rather not share."
 
-Accept LinkedIn message URLs (e.g. `https://www.linkedin.com/messaging/thread/<id>/...`). Validate only that each starts with `http(s)://` and contains `linkedin.com` — LinkedIn message URL shapes vary. Trim and dedupe.
+Accept URLs containing `linkedin.com`. Dedupe. Hold as `gathered.linkedin_message_urls: [...]`.
 
-Save as `voice_samples.linkedin_message_urls: [...]`. Append each to `background_queue`:
+If the user gives nothing across all three steps → save `voice_profile: null`. Move directly to Phase 7.
+
+### Step 6.5 — Synthesise
+
+If anything was gathered, run the synthesis pass. Tell the user:
+
+> "Reading everything now — back in 2-3 minutes."
+
+For each item:
+
+- **Brand-guide URL or article URL** — `WebFetch` the page. If blocked, fall back to `mcp__Claude_in_Chrome__navigate` + `read_page`.
+- **LinkedIn message URL** — `mcp__Claude_in_Chrome__navigate` to the thread, `read_page` or `get_page_text`. Extract only the user's outgoing messages from the thread.
+- **Brand guide text** (already in hand) — use as-is.
+
+Note any source that fails (404, blocked, can't extract). Capture in `failed_sources` — don't crash.
+
+From everything successfully read, distil:
 
 ```json
 {
-  "url": "<URL>",
-  "purpose": "voice",
-  "source": "linkedin-message",
-  "added_at": "ISO-8601",
-  "status": "pending"
+  "summary": "1-2 sentence description of how the user talks. e.g. 'Direct, plain, no jargon. Single-line questions. Curious, not selling.'",
+  "tone": ["direct", "warm", "curious"],
+  "do": [
+    "Use first names",
+    "Reference specific things they posted",
+    "Ask one short question"
+  ],
+  "dont": [
+    "Use the word 'leverage'",
+    "Use exclamation marks",
+    "Open with 'hope this finds you well'"
+  ],
+  "phrases": [
+    "Hey <Name> — saw your <thing>. <observation>. <one short question>?"
+  ],
+  "sources": {
+    "articles": ["https://...", "..."],
+    "linkedin_messages": ["https://...", "..."],
+    "brand_guide": "text" | "pdf" | "docx" | "url" | null
+  },
+  "failed_sources": ["https://..."],
+  "generated_at": "ISO-8601"
 }
 ```
 
-If skip / nothing → save `voice_samples.linkedin_message_urls: []`. Continue.
+Aim for: 2–4 tone words, 4–8 do items, 4–8 dont items, 1–3 example phrases. Keep them tight — this is structure the user (and `research-and-draft`) will scan repeatedly.
 
-If the user gives nothing across all three steps, that's fine — voice will gradually improve from their own outgoing messages once the LinkedIn messages export ingests (a separate skill). Move directly into Phase 7. **No yes/no gate.**
+**Do NOT save the source contents.** Only the distilled profile. Throw away the raw page text once synthesis is done.
+
+### Step 6.6 — Review and tune
+
+Show the synthesised voice nicely:
+
+```
+Here's your voice based on what you gave me:
+
+Summary
+  Direct, plain, no jargon. Single-line questions. Curious, not selling.
+
+Tone
+  · direct  · warm  · curious
+
+Do
+  · Use first names
+  · Reference specific things they posted
+  · Ask one short question
+  · ...
+
+Don't
+  · Use the word "leverage"
+  · Use exclamation marks
+  · Open with "hope this finds you well"
+  · ...
+
+Sound check
+  "Hey Toufiq — saw the lidar testing post. Towing behind a car? Any plans to go higher?"
+
+[Sources used: 2 articles, 1 LinkedIn message]
+[Failed: 1 article (404)]
+```
+
+Then ask:
+
+> "Want to add or remove anything? You can say things like 'remove the leverage rule', 'add: never end with looking forward to hearing from you', 'change the summary to ...', or 'looks good'. (edit / done)"
+
+Loop:
+- If user requests an edit → apply it (string-match on the item to remove, append to the relevant array for adds, replace summary verbatim if asked). Re-show the updated voice. Ask again.
+- If user says "done" / "looks good" / "yes" / similar → save `voice_profile` and continue.
+- If after 5 edit rounds the user is still tweaking, gently nudge: "We can keep tuning, or save what we've got and refine later via 'tune my voice'. (continue / done)"
+
+Save the final tuned profile as `voice_profile` (the JSON shape above). Move directly into Phase 7.
 
 ## Phase 7 — Quick start (optional)
 
@@ -434,22 +509,29 @@ Build the config payload:
   },
   "offer": "verbatim one-sentence offer",
   "offer_hook": "verbatim 1-2 sentence hook from Phase 3b",
-  "offer_urls": ["https://...", "https://..."],
-  "voice_samples": {
-    "brand_guide_text": "verbatim pasted text or null",
-    "brand_guide_url": "https://... or null",
-    "article_urls": ["https://...", "..."],
-    "linkedin_message_urls": ["https://www.linkedin.com/messaging/...", "..."]
+  "offer_profile": {
+    "summary": "...",
+    "key_benefits": ["...", "..."],
+    "objection_patterns": ["...", "..."],
+    "canonical_phrases": ["...", "..."],
+    "sources": ["https://...", "..."],
+    "failed_sources": ["https://..."],
+    "generated_at": "ISO-8601 timestamp"
   },
-  "background_queue": [
-    {
-      "url": "https://...",
-      "purpose": "offer | voice",
-      "source": "brand-guide | article | linkedin-message (omit for offer URLs)",
-      "added_at": "ISO-8601 timestamp",
-      "status": "pending"
-    }
-  ],
+  "voice_profile": {
+    "summary": "1-2 sentence description of how the user talks",
+    "tone": ["direct", "warm", "curious"],
+    "do": ["..."],
+    "dont": ["..."],
+    "phrases": ["..."],
+    "sources": {
+      "articles": ["https://..."],
+      "linkedin_messages": ["https://..."],
+      "brand_guide": "text | pdf | docx | url | null"
+    },
+    "failed_sources": ["https://..."],
+    "generated_at": "ISO-8601 timestamp"
+  },
   "icp": {
     "industry": "string",
     "role": "string",
@@ -520,8 +602,10 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 ## Things you must NOT do
 
 - Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local file is `.hhq-auth.json` in the project folder.
-- Do NOT try to fetch URLs from `background_queue` during onboarding. They're for asynchronous processing — just queue them and move on.
-- Do NOT pressure for voice samples. Phase 6 is gravy — if the user skips all three steps, that's fine; voice will improve over time from outgoing messages once messages-export ingestion lands.
+- Do NOT save raw page contents, PDFs, DOCX text, or LinkedIn message bodies anywhere. Synthesis is the only persistent artifact — distil and forget the source content.
+- Do NOT save uploaded files to disk or to the backend. PDF/DOCX inputs in Phase 6a are read inline; the file itself is the user's responsibility to keep.
+- Do NOT pressure for voice samples. Phase 6 is gravy — if the user skips, save `voice_profile: null`; they can build it later with `tune-voice`.
+- Do NOT loop on Phase 6.6 review forever. After 5 edit rounds, gently nudge them to "save and refine later" rather than grinding.
 - Do NOT ask network/source questions beyond LinkedIn — V1 is LinkedIn-CSV only.
 - Do NOT ask about paid sales tools, existing CRMs, or pipeline workflow.
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
