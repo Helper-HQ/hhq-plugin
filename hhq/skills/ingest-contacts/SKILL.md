@@ -1,6 +1,6 @@
 ---
 name: ingest-contacts
-description: Imports the user's LinkedIn export into the Helper HQ backend. Handles both Connections.csv (people in their network) and messages.csv (their direct-message history) — detects file type by header row and routes to the correct branch. Triggers when the user says they've got their LinkedIn export, drops a CSV in chat, asks to "import my contacts" / "import my messages", or otherwise indicates a LinkedIn export is ready. Connections POST to /api/me/contacts/import (dedup by linkedin_url, returns created/updated/unchanged); messages POST to /api/me/messages/import (dedup by hash of conversation+time+sender+body, links each message to an existing contact when from_url or to_urls match). Run AFTER onboard-user. If `.hhq-auth.json` does not exist in the project folder, route the user to onboard-user first.
+description: Imports the user's LinkedIn export into the Helper HQ backend. Handles Connections.csv (people in their network — full contact data) and messages.csv (digested client-side into a thin {linkedin_url, last_messaged_at, message_count} per conversation partner — message bodies are NOT persisted). Detects file type by header row and routes to the correct branch. Triggers when the user says they've got their LinkedIn export, drops a CSV in chat, asks to "import my contacts" / "import my messages", or otherwise indicates a LinkedIn export is ready. Connections POST to /api/me/contacts/import (dedup by linkedin_url, returns created/updated/unchanged); messages POST to /api/me/messages/import (digest only, returns updated/unchanged/unmatched, used to power the 30-day "don't message recently-messaged" filter in surface-next-5). Run AFTER onboard-user. If `.hhq-auth.json` does not exist in the project folder, route the user to onboard-user first.
 ---
 
 # Ingest Contacts — Sales Helper Lite
@@ -166,7 +166,11 @@ Expected response (HTTP 200):
 
 ## Messages branch
 
-LinkedIn's `messages.csv` records every direct message the user has sent or received. We use this for two things: (a) flagging existing conversations so we don't draft cold openers for ongoing dialogue, and (b) sampling the user's outgoing voice for drafting style. Process it AFTER Connections (if both are present) so received-message senders can be linked to existing contacts.
+LinkedIn's `messages.csv` records every direct message the user has sent or received. We **do not** persist message bodies on the backend — that's privacy-noisy and we never use them. Instead, we digest the export client-side into one row per conversation partner: `{linkedin_url, last_messaged_at, message_count}`. The backend stamps those two fields onto matching contacts. That's it.
+
+The digest powers a 30-day "don't message someone you just messaged" filter in `surface-next-5`, plus the `message_count` gives us a soft signal for "how talkative is this prospect with you." If we ever need the actual content of a recent thread, `research-and-draft` does a live Chrome read at draft time.
+
+Process Messages AFTER Connections (if both are present) so the contacts they reference exist when the digest lands.
 
 ### Step M1 — Skip preamble + read header
 
@@ -175,50 +179,43 @@ Same preamble-stripping logic as Step C1. The header row is the first row whose 
 ### Step M2 — Validate columns
 
 Required columns (LinkedIn uses uppercase headers):
-- `CONVERSATION ID`
 - `FROM`
 - `DATE`
-- `CONTENT`
 - `FOLDER`
 
 Useful optional columns:
-- `CONVERSATION TITLE`
 - `SENDER PROFILE URL`
-- `TO`
 - `RECIPIENT PROFILE URLS`
-- `SUBJECT`
+- `CONTENT`
 
 If a required column is missing, stop and tell the user the file doesn't look like a LinkedIn Messages export.
 
-### Step M3 — Normalise each row
+We do NOT need `CONTENT` to build the digest, but we DO need a profile URL to identify the other party — see Step M3.
 
-For every data row:
+### Step M3 — Build the digest client-side
+
+Walk each row and group by the **other party's LinkedIn URL** (not the user's). For each row:
 
 1. **Trim whitespace** on every cell.
-2. **Skip the row if** `CONTENT` is empty (LinkedIn includes some empty rows for system events).
-3. **Determine direction** from `FOLDER`:
-   - `FOLDER == "SENT"` → `direction = "sent"`
-   - Otherwise (INBOX, ARCHIVED, etc.) → `direction = "received"`
-4. **Parse `DATE`** with the format LinkedIn uses (e.g. `2024-03-14 10:30:00 UTC`). If unparseable, leave `sent_at` as the raw string — the backend tries Carbon-parse and falls back to null.
-5. **Build the row object** for the API:
+2. **Skip the row if** there's no usable URL on either side (rare — LinkedIn occasionally exports rows for deleted accounts).
+3. **Identify the other party** from `FOLDER`:
+   - `FOLDER == "SENT"` → other party = `RECIPIENT PROFILE URLS` (use the first URL if comma/semicolon-separated)
+   - Otherwise (INBOX, ARCHIVED, etc.) → other party = `SENDER PROFILE URL`
+4. **Parse `DATE`** with the format LinkedIn uses (e.g. `2024-03-14 10:30:00 UTC`).
+5. **Update the digest map** at key `<other_party_url>`:
+   - Set `last_messaged_at` to the max of (current value, this row's date).
+   - Increment `message_count` by 1.
+
+After walking all rows, the digest is a flat list:
 
 ```json
-{
-  "conversation_id": "<CONVERSATION ID>",
-  "direction": "sent" | "received",
-  "from_name": "<FROM>",
-  "from_url": "<SENDER PROFILE URL>",
-  "to_names": "<TO>",
-  "to_urls": "<RECIPIENT PROFILE URLS>",
-  "sent_at": "<DATE>",
-  "subject": "<SUBJECT or null>",
-  "body": "<CONTENT>",
-  "folder": "<FOLDER>",
-  "raw_csv": { ...the original row as a key/value object... }
-}
+[
+  { "linkedin_url": "https://www.linkedin.com/in/coleman-greg", "last_messaged_at": "2026-04-20T10:30:00Z", "message_count": 47 },
+  { "linkedin_url": "https://www.linkedin.com/in/marina-park", "last_messaged_at": "2026-03-02T14:05:00Z", "message_count": 3 }
+]
 ```
 
-Optional fields should be `null` when absent.
+**Do NOT include any message bodies, subjects, or conversation titles in the digest.** Privacy and storage hygiene.
 
 ### Step M4 — POST to /api/me/messages/import
 
@@ -228,7 +225,7 @@ Authorization: Bearer <jwt>
 Content-Type: application/json
 
 {
-  "messages": [ <row 1>, <row 2>, ... ]
+  "messages": [ <digest row 1>, <digest row 2>, ... ]
 }
 ```
 
@@ -236,22 +233,25 @@ Expected response (HTTP 200):
 
 ```json
 {
-  "created": 1247,
-  "skipped": 0,
-  "linked": 412,
-  "unlinked": 835,
-  "total": 1247
+  "updated": 412,
+  "unchanged": 50,
+  "unmatched": 835,
+  "total": 1297
 }
 ```
 
-`linked` = messages where the prospect (the *other* party) already exists in the user's contacts. `unlinked` = messages with people not in their network — kept anyway for voice analysis. Re-importing the same file is safe; the backend dedupes by hash of (conversation, time, sender, body).
+- `updated` — contacts whose `last_messaged_at` and/or `message_count` got newer values.
+- `unchanged` — contacts where the digest matched what was already stored (e.g. re-importing the same export).
+- `unmatched` — digest entries with a `linkedin_url` that doesn't exist in the user's contacts. Not an error — happens when someone's messaged someone outside their connections list.
+
+Re-importing is safe: the backend won't regress timestamps and only updates when something changed.
 
 ---
 
 ## Error handling (both branches)
 
 - **HTTP 401** → token wasn't accepted. Run the refresh / re-activate flow from Phase 0 once, then retry. If the second try also fails, tell the user their session is broken and to re-onboard.
-- **HTTP 422** → validation errors. The error body has `errors.contacts.{idx}.{field}` or `errors.messages.{idx}.{field}`. Tell the user honestly: "N rows had problems and weren't imported (e.g. row 12: missing direction). The rest went through if any." Show the first 2-3 indices and fields. Don't dump the whole error.
+- **HTTP 422** → validation errors. The error body has `errors.contacts.{idx}.{field}` or `errors.messages.{idx}.{field}`. Tell the user honestly: "N rows had problems and weren't imported (e.g. row 12: missing linkedin_url). The rest went through if any." Show the first 2-3 indices and fields. Don't dump the whole error.
 - **HTTP 5xx / network** → tell the user the backend's not responding, suggest retry in a moment. Don't keep retrying automatically.
 
 ## Report honestly
@@ -272,14 +272,13 @@ After a successful import, give a brief summary in plain language.
 
 **Messages-only result:**
 
-> "Imported `<filename>`.
+> "Digested `<filename>`.
 >
-> - **`<created>` new** messages stored.
-> - **`<linked>`** matched to people already in your contacts.
-> - **`<unlinked>`** are with people outside your connections (kept anyway — useful for voice).
-> - **`<skipped>`** were duplicates of messages already imported.
+> - **`<updated>`** contacts now have a 'last messaged' date and message count attached.
+> - **`<unchanged>`** were already up to date.
+> - **`<unmatched>`** are message threads with people not in your contacts list — that's expected, especially for one-off conversations.
 >
-> Your message history is now part of the picture I'll use when I draft openers — I'll skip cold-opener drafts for prospects you've already been chatting with."
+> What this means: when you ask for the next 5 prospects, I'll skip anyone you've messaged in the last 30 days. The message bodies themselves stay in LinkedIn — I only kept the timestamps and counts."
 
 **Both files imported in one go:** show both blocks back-to-back, brief.
 
@@ -294,7 +293,8 @@ Do NOT echo full lists. Do NOT show example rows.
 - Do NOT delete prospects from the master if they're missing from a fresh export — the backend keeps everything by design (you couldn't delete them even if you tried; the import endpoint is upsert-only).
 - Do NOT attempt to parse `.zip` archives — instruct the user to extract `Connections.csv` (and `messages.csv` if present) first.
 - Do NOT mix rows from Connections and Messages into the same POST. Each file goes to its own endpoint with its own row schema.
-- Do NOT try to derive `direction` from anything other than `FOLDER` (LinkedIn's own classification). Don't guess from FROM/TO names.
+- Do NOT include message bodies, subjects, or conversation titles in the messages digest. The backend doesn't accept them — and we don't want them stored.
+- Do NOT try to derive direction from anything other than `FOLDER` (LinkedIn's own classification). Don't guess from FROM/TO names.
 - Do NOT promise enrichment, deduplication beyond what the backend does, or any V2 behaviour.
 - Do NOT log the licence key or JWT in chat.
 

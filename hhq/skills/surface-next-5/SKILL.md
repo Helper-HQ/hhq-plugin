@@ -61,15 +61,17 @@ Hold the config in memory for ranking.
 
 If `total > 500`, page through additional pages (`page=2`, etc.) until you have all of them. Don't surface if total is `0` — tell the user "No contacts yet — drop in your LinkedIn export when it arrives." Stop.
 
-The summary endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, status, last_surfaced_at — that's enough for eligibility + pre-filter + ranking. You do NOT need the heavy fields (research, notes, messages) for surfacing.
+The summary endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, status, last_surfaced_at, last_messaged_at, message_count — that's enough for eligibility + pre-filter + ranking. You do NOT need the heavy fields (research, notes, messages) for surfacing.
 
 If checks pass, continue without ceremony — no yes/no gate at the top, the user just asked for 5 prospects, give them 5 prospects.
 
 ## Phase 1 — Eligibility filter
 
-For each contact, keep as **eligible** if:
+For each contact, keep as **eligible** only if **all** of these pass:
 
-| `status` | `last_surfaced_at` | Eligible? |
+**Status filter:**
+
+| `status` | `last_surfaced_at` | Pass? |
 |---|---|---|
 | `new` | (any) | ✅ yes |
 | `surfaced` | within last 30 days | ❌ no — cooldown |
@@ -80,7 +82,17 @@ For each contact, keep as **eligible** if:
 | `paused` | (any) | ❌ no — user explicitly paused |
 | `disqualified` | (any) | ❌ no |
 
-Cooldown is 30 days, hard-coded for V1. Do not invent a config knob for this.
+**Recently-messaged filter (independent):**
+
+| `last_messaged_at` | Pass? |
+|---|---|
+| null | ✅ yes — never messaged |
+| over 30 days ago | ✅ yes — out of cooldown |
+| within last 30 days | ❌ no — already in active conversation, don't draft a cold opener |
+
+`last_messaged_at` comes from the messages digest in `ingest-contacts` (LinkedIn `messages.csv` summarised to one row per conversation partner). The point of this filter: if the user has been messaging someone in the last 30 days on LinkedIn, the plugin should *not* surface them as a fresh prospect to draft a cold opener for.
+
+Cooldown is 30 days for both the status cooldown and the recently-messaged filter, hard-coded for V1. Do not invent a config knob for this.
 
 If after filtering there are **zero eligible contacts**, tell the user honestly:
 
