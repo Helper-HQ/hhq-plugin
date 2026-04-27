@@ -585,7 +585,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant A — quick-start URLs were saved (`config.quick_start.urls.length > 0`):**
 
-> "All set. Your config is saved on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats.
+> "All set — everything's saved and updated. You'll see a couple of small files in your project folder; be sure to keep them — that's how we know it's you across chats.
 >
 > Your LinkedIn export is in flight (usually a few hours, sometimes up to 24). And — your `<N>` quick-start prospects are queued. Whenever you're ready, say 'let's go on quick start' and I'll research each, draft an opener, and have them ready to send in a few minutes.
 >
@@ -595,7 +595,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant B — no quick-start URLs (`config.quick_start` is null):**
 
-> "All set. Your config is saved on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats.
+> "All set — everything's saved and updated. You'll see a couple of small files in your project folder; be sure to keep them — that's how we know it's you across chats.
 >
 > Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
 >
