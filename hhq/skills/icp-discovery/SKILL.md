@@ -159,7 +159,11 @@ Accept space/comma/newline-separated URLs. Validate `http(s)://`. Dedupe. Hold a
 
 If user gives nothing across 3h and 3i → skip the synthesis fetch step. Move directly to Phase 5.
 
-## Phase 4 — Read sources and synthesise
+## Phase 4 — Read sources and synthesise (remote prompt)
+
+The synthesis prompt is **server-controlled** — fetched at runtime from the backend, admin-tunable without a plugin release. This is the "remote skill" pattern shared with `research-and-draft`.
+
+### Step 4a — Read source pages
 
 If any URLs were captured in 3h or 3i:
 
@@ -169,34 +173,58 @@ For each URL:
 - **LinkedIn profile (3h)** → `mcp__Claude_in_Chrome__navigate` + `read_page`. Pull headline, current company, role, recent posts (so we can spot patterns across example clients).
 - **General URL (3i)** → `WebFetch`. Fall back to Chrome navigate + read_page if blocked.
 
-If a fetch fails (404, blocked, timeout), capture in `failed_sources` and continue. Don't crash.
+If a fetch fails (404, blocked, timeout), capture the URL in a local `failed_urls` list and continue. Don't crash.
 
-Distil into the `icp_profile` shape (merge with what you already captured from Phase 3):
+Hold the raw page text per URL in skill memory — needed for the synthesis call below, then discarded.
+
+If user gave NO URLs across both 3h and 3i → skip Step 4b's fetch step but still run Step 4b to synthesise from Phase 3 answers alone (the prompt handles the empty-sources case).
+
+### Step 4b — Fetch the synthesis prompt
+
+```
+GET <backend_url>/api/mcp/prompts/synthesise_icp_profile
+Authorization: Bearer <jwt>
+```
+
+Returns:
 
 ```json
 {
-  "summary": "1-3 sentences describing the ICP and why-now angle, in the user's voice if possible",
-  "industries": ["...", "..."],
-  "roles": ["...", "..."],
-  "company_size_or_stage": "...",
-  "geography": "..." | null,
-  "triggers": ["...", "..."],
-  "pain_points": ["...", "..."],
-  "disqualifiers": ["...", "..."],
-  "buying_signals": ["...", "..."],
-  "example_clients": ["...", "..."],
-  "example_client_urls": ["https://...", "..."],
-  "sources": ["https://...", "..."],
-  "failed_sources": ["https://..."],
-  "generated_at": "ISO-8601 timestamp"
+  "name": "synthesise_icp_profile",
+  "template": "<the prompt with {{placeholders}}>",
+  "version": <int>,
+  "updated_at": "ISO-8601"
 }
 ```
 
-`buying_signals` is new in this synthesis pass — short phrases (verbatim where the source page used them) describing what a hot prospect looks like. Aim for 3–6.
+**Fallback:** if the fetch fails (404 / network / 5xx), use the embedded baseline at the bottom of this file (Step 4d) and continue. Don't block on the backend — the user has work in flight.
 
-`example_clients` is a synthesised list of patterns across the example client profiles you read (e.g. "Series A SaaS founders, technical background, posting weekly about ops"). Aim for 1–3 short pattern descriptions, not raw names.
+### Step 4c — Substitute and run
 
-**Do NOT save raw page contents.** Distil and forget — same rule as `onboard-user` Phase 6.
+Substitute the user's Phase 3 answers + raw page reads into the template:
+
+- `{{user_industries}}` — Phase 3a list, joined with " · "
+- `{{user_roles}}` — Phase 3b list
+- `{{user_company_size_or_stage}}` — Phase 3c, or "—" if blank
+- `{{user_geography}}` — Phase 3d, or "—"
+- `{{user_triggers}}` — Phase 3e list as numbered lines
+- `{{user_pain_points}}` — Phase 3f list as numbered lines
+- `{{user_disqualifiers}}` — Phase 3g list, or "—" if empty
+- `{{example_client_profiles_raw}}` — concatenated raw page reads from 3h with URL headers (`### URL\n<text>`); "—" if none
+- `{{source_urls_raw}}` — concatenated raw page reads from 3i with URL headers; "—" if none
+- `{{generated_at}}` — current ISO-8601 timestamp
+
+Run the substituted prompt. The model returns the structured `icp_profile` JSON.
+
+Parse the JSON. Validate top-level keys exist. If parse fails, retry once with "Return only valid JSON, no preamble." If retry also fails, fall back to Step 4d.
+
+**Don't save the raw page contents anywhere.** The prompt has consumed them; throw them away.
+
+### Step 4d — Embedded baseline (fallback)
+
+Used only if Step 4b's fetch fails OR Step 4c's parse fails twice. Keeps the user unblocked.
+
+Build the profile manually from Phase 3 answers — set `summary` from offer/triggers, copy lists 1:1 from user input, set `key_benefits`/`canonical_phrases`/`buying_signals`/`example_clients` to empty arrays (no synthesis happened), record any failed URLs in `failed_sources`. Tell the user honestly: "Heads up — synthesis prompt unreachable, saved your answers as-is. Retry later with 'review my ICP' once the backend's back."
 
 ## Phase 5 — Show the profile + tune
 

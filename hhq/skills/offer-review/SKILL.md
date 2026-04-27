@@ -160,7 +160,11 @@ Accept space/comma/newline-separated URLs. Validate `http(s)://`. Dedupe. Hold a
 
 If user gives nothing → skip Phase 4 fetch step. Move directly to Phase 5 (the profile will have everything from Phase 3 but no URL-derived fields).
 
-## Phase 4 — Read sources and synthesise
+## Phase 4 — Read sources and synthesise (remote prompt)
+
+The synthesis prompt is **server-controlled** — fetched at runtime from the backend, admin-tunable without a plugin release. This is the "remote skill" pattern shared with `research-and-draft`.
+
+### Step 4a — Read source pages
 
 If URLs were captured in 3h:
 
@@ -169,37 +173,57 @@ If URLs were captured in 3h:
 For each URL:
 - `WebFetch` the page. Fall back to `mcp__Claude_in_Chrome__navigate` + `read_page` if blocked.
 
-If a fetch fails (404, blocked, timeout), capture in `failed_sources` and continue. Don't crash.
+If a fetch fails (404, blocked, timeout), capture the URL in a local `failed_urls` list and continue. Don't crash.
 
-From everything you read, extract:
+Hold the raw page text per URL in skill memory — needed for the synthesis call below, then discarded.
 
-- **`summary`** — 1–3 sentences combining the offer + hook + key thing the pages emphasise. Use the user's own words where possible.
-- **`key_benefits`** — short phrases the company uses, verbatim where possible. 4–8 items.
-- **`canonical_phrases`** — distinctive wording worth echoing in openers. 3–6 items, verbatim.
-- **`proof_points`** — merge with what user gave in 3d. Add anything strong from the pages they didn't mention.
-- **`objection_patterns`** — merge with 3g. Add objections the pages address that the user didn't mention.
+If user gave NO URLs → skip Step 4a's fetch step but still run Step 4b to synthesise from Phase 3 answers alone (the prompt handles the empty-sources case).
 
-Build `offer_profile`:
+### Step 4b — Fetch the synthesis prompt
+
+```
+GET <backend_url>/api/mcp/prompts/synthesise_offer_profile
+Authorization: Bearer <jwt>
+```
+
+Returns:
 
 ```json
 {
-  "summary": "...",
-  "outcomes": ["...", "..."],
-  "key_benefits": ["...", "..."],
-  "canonical_phrases": ["...", "..."],
-  "proof_points": ["...", "..."],
-  "differentiation": ["...", "..."],
-  "pricing_band": "..." | null,
-  "objection_patterns": ["...", "..."],
-  "sources": ["https://...", "..."],
-  "failed_sources": ["https://..."],
-  "generated_at": "ISO-8601 timestamp"
+  "name": "synthesise_offer_profile",
+  "template": "<the prompt with {{placeholders}}>",
+  "version": <int>,
+  "updated_at": "ISO-8601"
 }
 ```
 
-**Do NOT save raw page contents.** Distil and forget.
+**Fallback:** if the fetch fails (404 / network / 5xx), use the embedded baseline at Step 4d. Don't block — keep the user moving.
 
-If no URLs were given (or all failed), build `offer_profile` from Phase 3 answers only — `summary` = a synthesis of `offer` + `offer_hook` + `outcomes`, and skip `key_benefits` / `canonical_phrases` (set to empty arrays).
+### Step 4c — Substitute and run
+
+Substitute the user's Phase 3 answers + raw page reads into the template:
+
+- `{{user_offer}}` — Phase 3a verbatim
+- `{{user_offer_hook}}` — Phase 3b verbatim
+- `{{user_outcomes}}` — Phase 3c list as numbered lines
+- `{{user_proof_points}}` — Phase 3d list as numbered lines, "—" if empty
+- `{{user_differentiation}}` — Phase 3e list, "—" if empty
+- `{{user_pricing_band}}` — Phase 3f, or "—" if skipped
+- `{{user_objection_patterns}}` — Phase 3g list as numbered lines
+- `{{source_urls_raw}}` — concatenated raw page reads from 3h with URL headers (`### URL\n<text>`); "—" if none
+- `{{generated_at}}` — current ISO-8601 timestamp
+
+Run the substituted prompt. The model returns the structured `offer_profile` JSON.
+
+Parse the JSON. Validate top-level keys exist. If parse fails, retry once with "Return only valid JSON, no preamble." If retry also fails, fall back to Step 4d.
+
+**Don't save the raw page contents anywhere.** The prompt has consumed them; throw them away.
+
+### Step 4d — Embedded baseline (fallback)
+
+Used only if Step 4b's fetch fails OR Step 4c's parse fails twice. Keeps the user unblocked.
+
+Build `offer_profile` manually from Phase 3 answers — `summary` = a synthesis of `offer` + `offer_hook` + `outcomes` you write inline, copy other lists 1:1 from user input, set `key_benefits` and `canonical_phrases` to empty arrays. Tell the user honestly: "Heads up — synthesis prompt unreachable, saved your answers as-is. Retry later with 'review my offer' once the backend's back."
 
 ## Phase 5 — Show the profile + tune
 

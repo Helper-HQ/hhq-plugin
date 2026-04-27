@@ -61,7 +61,7 @@ Edit, commit, push, then `/plugin marketplace update helper-hq`. Or for tighter 
 ## Architecture
 
 - **Single `hhq` plugin.** All helpers (sales, future marketing, future ops) and all tiers (lite/pro/elite) live inside, gated by a signed token.
-- **Hybrid skill model.** Low-IP skills (CSV parsing, status updates, onboarding) ship as full-local skill markdown. High-IP skills (prospect ranking, research analysis, opener drafting) are *structured* as hollow skills that will move to server-side MCP calls in V2 — the methodology lives behind the API, not on the user's disk.
+- **Hybrid skill model.** Low-IP, slow-changing skills (CSV parsing, status updates, onboarding) ship as full-local skill markdown. High-IP or fast-iterating skills (prospect ranking, research analysis, opener drafting, ICP/offer synthesis) are *remote skills* — the prompt is fetched at runtime from the backend `/api/mcp/prompts/{name}`, admin-tunable without a plugin release. The methodology lives behind the API, not on the user's disk.
 - **Auth check** at the top of every skill. Reads `.hhq-auth.json` from the project folder and runs a refresh-or-reactivate fallback before any backend call.
 - **Backend API.** All durable state (config, contacts, current batch, per-prospect research, prompt templates) lives on the Helper HQ backend. V1 dogfood: a stable ngrok subdomain (`https://hhq.ngrok.dev`) pointing at the admin's local Herd. Production swaps in a stable Helper HQ domain.
 

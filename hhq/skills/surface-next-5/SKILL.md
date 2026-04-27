@@ -37,11 +37,11 @@ All API calls below use `Authorization: Bearer <jwt>` and `curl -sk` (`-s` silen
 
 Never log the JWT or licence key.
 
-## Hollow-skill seam (V1 dogfood)
+## Remote-skill seam (V1 dogfood)
 
-The ranking step is structured to become a *hollow skill* in Pro/Elite tiers — turning weighted signals + 100 candidates into a top-5 list with reasoning is the high-IP part, and it'll move to a server-side MCP call (`POST /api/mcp/rank_prospects`) in V2. The endpoint already exists as a stub on the backend.
+The ranking step is structured to become a *remote skill* — turning weighted signals + 100 candidates into a top-5 list with reasoning is high-IP and prompt-iterating work, and it'll move to a server-side MCP call (`POST /api/mcp/rank_prospects`) in V2. The endpoint already exists as a stub on the backend.
 
-For V1 dogfood, do the ranking in-context using your own reasoning over the supplied candidates. Treat the **"Rank candidates" phase below** as the hollow boundary. Everything before that phase (config load, eligibility filter, pre-filter) and everything after (presentation, edit handling, persistence, handoff) stays in the local skill regardless of tier.
+For V1 dogfood, do the ranking in-context using your own reasoning over the supplied candidates. Treat the **"Rank candidates" phase below** as the remote boundary. Everything before that phase (config load, eligibility filter, pre-filter) and everything after (presentation, edit handling, persistence, handoff) stays local regardless.
 
 ## Pre-flight checks
 
@@ -120,9 +120,9 @@ Be honest about this constraint when reasoning. If the user's most-weighted sign
 
 The pre-filter should be permissive — keep anyone with even a moderate match on the highest-weighted evaluable signals. Trim down based on weighted score, not strict pass/fail.
 
-## Phase 3 — Rank candidates (the hollow seam)
+## Phase 3 — Rank candidates (the remote seam)
 
-**This is the hollow boundary.** In V2, replace this phase with:
+**This is the remote boundary.** In V2, replace this phase with:
 ```
 POST <backend_url>/api/mcp/rank_prospects
 Authorization: Bearer <jwt>
