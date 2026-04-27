@@ -20,10 +20,10 @@ Trigger when:
 The Helper HQ backend lives at:
 
 ```
-https://hhq-website.test
+https://hhq.ngrok.dev
 ```
 
-This is a Herd / Expose tunnel during V1 dogfood. The URL rotates roughly hourly. If a real user reports it's not reachable, the URL needs to be refreshed in this skill (and in their `.hhq-auth.json`). Production will replace this with a stable domain.
+This is a stable ngrok subdomain pointing at the local Herd backend during V1 dogfood. The URL doesn't rotate, but the tunnel is only up when the admin (Brad) has ngrok running. If activation or any API call returns a network error, the tunnel is probably down — tell the user to retry in a few minutes; do not change the URL or write a partial auth file. Production will replace this with a stable Helper HQ domain.
 
 ## Phase 0 — Backend activation
 
@@ -70,7 +70,7 @@ Content-Type: application/json
 }
 ```
 
-Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool. The `-k` flag is needed during dogfood because Expose's TLS cert may not validate cleanly.
+Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool. (`-s` silent, `-k` is harmless and covers any unusual cert situations.)
 
 Handle the response:
 
@@ -87,7 +87,7 @@ Write `<project-dir>/.hhq-auth.json`:
 
 ```json
 {
-  "backend_url": "https://hhq-website.test",
+  "backend_url": "https://hhq.ngrok.dev",
   "license_key": "<the licence key>",
   "machine_id": "<the generated UUID>",
   "jwt": "<the token returned by /api/activate>",

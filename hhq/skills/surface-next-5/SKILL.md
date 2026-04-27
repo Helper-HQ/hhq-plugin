@@ -33,7 +33,7 @@ If `jwt_expires_at` is past or within 60s of expiry:
 1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-auth.json` (preserving other fields).
 2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403 license_inactive / machine_limit_reached, tell the user and stop.
 
-All API calls below use `Authorization: Bearer <jwt>` and `curl -sk` (the `-k` tolerates the Expose tunnel's TLS during dogfood).
+All API calls below use `Authorization: Bearer <jwt>` and `curl -sk` (`-s` silent, `-k` is harmless and covers any unusual cert situations).
 
 Never log the JWT or licence key.
 
