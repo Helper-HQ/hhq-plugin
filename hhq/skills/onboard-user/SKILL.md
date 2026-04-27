@@ -168,7 +168,25 @@ Then transition into the deep dive:
 
 > "Good — that's the slow thing handled. While LinkedIn prepares the file, let's dial in your offer and your target. This is the work that makes the messages I draft for you actually land."
 
-## Phase 3 — Offer (deep dive)
+## Phase 3 — Offer
+
+### Step 3.0 — Quick or deep gate
+
+Ask up front so the user picks depth once:
+
+> "Quick offer pass here, or want the deeper offer review? Quick is one sentence + URLs (3 min). Deep walks through hook, outcomes, proof, differentiation, pricing band, and objections, reads your URLs, and pulls out canonical language for openers (~10 min). You can always run the deeper one later by saying 'review my offer'. (quick / deep)"
+
+Accept natural-language equivalents ("quick" / "fast" / "simple" → quick; "deep" / "deeper" / "full" / "the long one" → deep).
+
+**If "deep":**
+
+Invoke the `offer-review` skill inline. It will GET the current config (which has `offer`/`offer_hook`/`offer_profile` all null at this point in onboarding, so no overwrite gate fires), run its full walkthrough, and PUT the result. When it returns, mark `_deep_skills_used.offer_review = true` in your skill memory and **skip the rest of Phase 3** — jump straight to Phase 4. Do not re-ask the same questions.
+
+**If "quick" (or skipped):**
+
+Continue the existing quick path below.
+
+### Step 3.1 — Quick offer
 
 > "What do you offer? One sentence. The thing I'll match prospect signals against.
 >
@@ -254,7 +272,21 @@ Save as `offer_profile`:
 
 Move directly into Phase 4. **No yes/no gate.** Brief acknowledgment of what you found — one line, naming the angle and a benefit or two.
 
-## Phase 4 — ICP (deep dive)
+## Phase 4 — ICP
+
+### Step 4.0 — Quick or deep gate
+
+> "Same call for ICP — quick version here (industry + role + size, 2 min) or the deeper ICP discovery (walks through stage, geography, triggers, pain points, disqualifiers, and reads up to 3 example client LinkedIn profiles, ~10 min)? Run the deeper one later anytime with 'discover my ICP'. (quick / deep)"
+
+**If "deep":**
+
+Invoke the `icp-discovery` skill inline. It will GET current config (with `icp`/`icp_profile` null at this point), run its walkthrough, and PUT the result. When it returns, mark `_deep_skills_used.icp_discovery = true` in skill memory and **skip the rest of Phase 4** — jump straight to Phase 5.
+
+**If "quick" (or skipped):**
+
+Continue the existing quick path below.
+
+### Step 4.1 — Quick ICP
 
 > "Who's your ideal prospect? At minimum tell me an industry and a role. Add anything else that matters — company size, stage, geography — if you want to be more specific."
 
@@ -498,7 +530,21 @@ PUT the config to the backend.
 
 Read `<project-dir>/.hhq-auth.json` to get `backend_url` and `jwt`.
 
-Build the config payload:
+### Step 8.0 — GET current config first (merge, don't clobber)
+
+If `_deep_skills_used.offer_review` or `_deep_skills_used.icp_discovery` is true in skill memory, those skills already PUT their fields during onboarding. Don't overwrite them.
+
+`GET <backend_url>/api/me/config` and hold the response as `existing_config`.
+
+Build the payload below from skill memory, but for any deep-skill-owned fields, **prefer `existing_config` values** over what's in skill memory:
+
+- If `_deep_skills_used.offer_review` → use `existing_config.offer`, `existing_config.offer_hook`, `existing_config.offer_profile`.
+- If `_deep_skills_used.icp_discovery` → use `existing_config.icp`, `existing_config.icp_profile`.
+- Otherwise → use the values you captured in Phase 3 / Phase 4.
+
+All other fields (fit, voice_profile, signals, linkedin_export, quick_start, version, tier, onboarded_at) come from skill memory regardless.
+
+### Step 8.1 — Build the payload
 
 ```json
 {

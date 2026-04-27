@@ -1,21 +1,18 @@
 ---
-description: Lists every Helper HQ skill the user's licence entitles them to, grouped by helper, plus locked skills available on higher tiers. Reads tier from the project's `.hhq-auth.json` (V1) or the signed token (V2).
+description: Lists every Helper HQ skill the user has, grouped by helper. V1 — all activated users get all helpers; this is a pure rendering command and makes no backend calls.
 ---
 
 # /hhq:help — Helper HQ skill directory
 
-When invoked, render a clean directory of every skill the user's licence currently entitles them to, plus a brief list of locked skills they could unlock by upgrading.
+When invoked, render a clean directory of every Helper HQ skill, grouped by helper. V1 ships with all helpers active for every user — there are no per-helper or per-tier gates yet, so the full directory always renders.
 
 ## Read auth state
 
 Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
 
-Try to read `<project-dir>/.hhq-auth.json`:
+Try to read `<project-dir>/.hhq-auth.json` (purely to detect onboarding status — the listing itself doesn't depend on its contents).
 
-- **File exists and parses** → pull `tier` and `helpers`. If those fields are missing (auth file from an older onboarding), default `tier = "lite"` and `helpers = ["sales-helper"]`.
-- **File missing or unreadable** → render the help block but prepend the activation prompt below. Use defaults `tier = "lite"`, `helpers = ["sales-helper"]` for the listing.
-
-Do NOT call any backend API for this command — it's pure rendering. Even if the JWT has expired, you can still render the help directory based on the cached tier/helpers in the auth file.
+Do NOT call any backend API for this command — it's pure rendering. Even if the JWT has expired, the help directory still renders.
 
 ## Determine onboarding state
 
@@ -29,12 +26,12 @@ If the file exists but the user hasn't completed onboarding (you can detect this
 
 ## Render the directory
 
-Use this exact shape. Adapt the active/locked split to the user's tier.
+Use this exact shape.
 
 ```
-**Helper HQ** • Tier: <tier title-cased>
+**Helper HQ**
 
-═══ Sales Helper (<tier title-cased>) ═══
+═══ Sales Helper ═══
 
 Active skills:
 
@@ -48,17 +45,15 @@ Active skills:
 
 • **research-and-draft** — Researches each prospect via their LinkedIn profile + recent posts, drafts a Greg-style opener using your voice + offer profiles, saves research and message history to the backend. Two entry points: normal flow after surface-next-5 ("let's go", "draft them"), and quick-start flow after onboarding ("let's go on quick start", "research my 5") for the up-to-5 prospects you hand-picked.
 
-Locked — upgrade to unlock:
-
-• **follow-up-drafter** (Pro) — Drafts timed follow-ups for prospects who haven't replied, aware of the original opener.
-• **deep-research** (Pro) — Pulls company news, funding rounds, recent press alongside the LinkedIn profile read.
-• **email-ingest** (Pro) — Ingests Gmail / Outlook contacts in addition to LinkedIn.
-• **apollo-enrich** (Elite) — Finds NEW prospects from Apollo enrichment, not limited to your existing LinkedIn connections.
-• **linkedin-discover** (Elite) — Discovers prospects matching your ICP from outside your warm network.
-
 ═══ Marketing Helper ═══
 
-Coming in V2 — not yet available.
+Active skills:
+
+• **offer-review** — Deep guided walkthrough to define your offer for a campaign — one-sentence offer, hook, outcomes, proof points, differentiation, pricing band, common objections, source URLs read inline. Saves a structured `offer_profile` Sales Helper uses when drafting openers. Run any time to refresh — V1 stores one active offer; running again replaces it (overwrite gate confirms first). Triggers on "review my offer", "offer review", "offer discovery", "redo my offer", "tighten my offer".
+
+• **icp-discovery** — Deep guided walkthrough to define your ideal customer profile — industries, roles, size/stage, geography, triggers, pain points, disqualifiers, example client LinkedIn URLs read inline. Saves a structured `icp_profile` Sales Helper uses when ranking prospects. V1 stores one active ICP; running again replaces it. Triggers on "discover my ICP", "define my ICP", "review my ICP", "who's my ideal customer".
+
+The two skills are also offered inline during onboarding — pick "deep" at the offer or ICP step to run them then instead of the quick version.
 
 ═══ Storage ═══
 
@@ -69,27 +64,15 @@ Your contact data, config, and current batch live on the Helper HQ backend. Your
 If you're stuck on what to say, just describe what you want to do in plain language. The skills above auto-trigger from natural phrasing — you almost never need to invoke them by name.
 ```
 
-## Tier-based locking rules
-
-| Tier | Active | Locked (shown as upgrade) |
-|---|---|---|
-| `lite` | onboard-user, ingest-contacts, tune-voice, surface-next-5, research-and-draft | All Pro and Elite skills above |
-| `pro` | All Lite skills + follow-up-drafter, deep-research, email-ingest | Elite skills above |
-| `elite` | All Lite + Pro skills + apollo-enrich, linkedin-discover | (no locked skills) |
-
-When rendering, only show the **Locked** section if there are actually locked skills for the user's tier. For an Elite user, omit the Locked section entirely.
-
 ## What this command does NOT do
 
 - Does NOT modify any files.
 - Does NOT call any backend API.
 - Does NOT trigger any other skill — it's pure rendering.
-- Does NOT show roadmap items beyond the Pro/Elite skills listed above. Don't speculate about V3 features.
-- Does NOT pretend a locked skill is active. If the user's tier doesn't include a skill, list it as locked.
-- Does NOT show internal auth values (jwt, license_key, machine_id, raw signal weights). Tier and helpers are fine to surface; secrets are not.
+- Does NOT speculate about future helpers or skills not listed above.
+- Does NOT show internal auth values (jwt, license_key, machine_id, raw signal weights).
 
 ## Edge cases
 
-- **No `.hhq-auth.json`** → render the help block with the activation prompt prepended. Default tier `lite`.
-- **Malformed tier value** → default to `lite`, render help, show a discreet note: "_(tier read defaulted to lite — check `.hhq-auth.json`)_".
-- **`helpers[]` does not include `sales-helper`** (future state) → omit the Sales Helper block. If no helpers at all, render an empty-state message: "No helpers active on your licence — visit helperhq.co to add one."
+- **No `.hhq-auth.json`** → render the help block with the activation prompt prepended.
+- **Auth file present but malformed** → render the help block as normal; auth contents don't affect the listing in V1.

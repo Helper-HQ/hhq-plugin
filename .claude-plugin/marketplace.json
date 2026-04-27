@@ -8,7 +8,7 @@
     {
       "name": "hhq",
       "source": "./hhq",
-      "description": "Helper HQ — a family of AI-assisted helpers for solo founders, coaches, and consultants. V1 ships Sales Helper Lite: open a chat, ask for the next 5 prospects, get short tailored opening messages drafted from real signals (LinkedIn posts, recent activity, role changes). Human-in-the-loop by design — the plugin prepares, you review and send."
+      "description": "Helper HQ — a family of AI-assisted helpers for solo founders, coaches, and consultants. V1 ships Sales Helper (prospect ranking + opener drafting from your LinkedIn network) plus Marketing Helper (deep ICP discovery and offer review walkthroughs). Human-in-the-loop by design — the plugin prepares, you review and send."
     }
   ]
 }
