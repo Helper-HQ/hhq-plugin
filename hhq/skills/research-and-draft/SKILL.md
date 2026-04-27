@@ -151,17 +151,64 @@ Use the same presentation format as Phase 5 in the normal flow. List all `<N>` o
 
 Phase Q ends here. Do NOT continue into Phase 1 — the normal flow doesn't apply.
 
-## Hollow-skill seams (V1 dogfood)
+## Prompts come from the backend
 
-This skill has **two** hollow-skill seams that move to server-side MCP calls in V2. The endpoints already exist as stubs:
+Drafting and research-analysis prompts are **server-controlled** as of v0.5. Two prompt templates live on the backend, admin-tunable via the Filament admin UI (and AI-assisted tuning), no plugin update needed when prompts change:
 
-**Seam A — Research analysis** (`POST /api/mcp/research_analyze`):
-Takes the raw page-scrape data and returns a structured `research`-shaped finding. The IP is the analysis prompt — *what to look for, what counts as a signal, how to weight a recent post against a role change*, etc.
+- `draft_opener` — the prompt that turns research + offer + voice into an opening message
+- `research_analyze` — the prompt that turns raw profile + activity into a structured signal finding
 
-**Seam B — Opener drafting** (`POST /api/mcp/draft_opener`):
-Takes the research findings + offer + ICP and returns a Greg-style opener. The IP is the drafting prompt — the style guide, the structural rules, the anti-patterns to avoid.
+### How to use them
 
-For V1 dogfood you do both yourself in-context. The Greg-style methodology and the analysis heuristics are written below. Treat them as the high-IP content that will live behind the MCP API in V2. Do not call the stub endpoints in V1 — they return placeholder text not yet useful for real drafting.
+At the start of each invocation (once per session is enough — cache for the rest of the session):
+
+```
+GET <backend_url>/api/mcp/prompts/draft_opener
+GET <backend_url>/api/mcp/prompts/research_analyze
+```
+
+Both return:
+
+```json
+{
+  "name": "...",
+  "template": "<the prompt template, with {{placeholders}}>",
+  "version": 7,
+  "updated_at": "ISO-8601"
+}
+```
+
+**For each prospect, when you draft:**
+
+1. Substitute the user's data into the template:
+   - `{{user_name_or_self}}` — user's first name from auth, or "you"
+   - `{{offer_summary}}` — `config.offer_profile.summary` or `config.offer`
+   - `{{offer_hook}}` — `config.offer_hook`
+   - `{{voice_summary}}` — `config.voice_profile.summary` or "(no voice profile yet)"
+   - `{{voice_tone}}` — `config.voice_profile.tone` joined with commas
+   - `{{voice_do}}` — `config.voice_profile.do` as a numbered list
+   - `{{voice_dont}}` — `config.voice_profile.dont` as a numbered list
+   - `{{voice_phrases}}` — `config.voice_profile.phrases` as a bulleted list
+   - `{{prospect_first_name}}`, `{{prospect_last_name}}`, `{{prospect_position}}`, `{{prospect_company}}` — from contact record
+   - `{{research_summary}}` — your structured analysis from Phase 2
+   - `{{research_signal}}` — the specific signal text from Phase 2
+
+2. Run the substituted prompt as your drafting brief. The prompt itself defines the universal rules (no cliches, no exclamation marks unless mirroring voice, soft ask, etc.) — you don't need to re-encode them. Voice rules are user-controlled overlay; universal rules win on conflict (the prompt says so).
+
+3. Same shape for research analysis — substitute `{{profile_raw}}`, `{{activity_raw}}`, `{{offer_summary}}`, `{{icp_summary}}`, `{{prospect_first_name}}`, etc., into `research_analyze` and run it.
+
+### Fallback
+
+If the prompt fetch fails (404, network, backend down):
+
+- Use the embedded baseline below ("Phase 3 — Fallback drafting methodology"). Treat it as a thin baseline, not the canonical IP.
+- Flag it in the result block: `[Drafted with embedded fallback prompt — backend prompt unreachable]`. The user notices and we know to investigate.
+- Don't crash the batch.
+
+### Why this matters
+
+- Prompt tuning is a backend deploy. Brad can iterate on opener quality without bumping the plugin or asking users to update.
+- Voice profile (per-user) and the global prompt (admin) compose cleanly: global = methodology + universal rules; voice = user's specific style. The prompt template substitutes both.
 
 ## Pre-flight checks
 
@@ -246,11 +293,13 @@ Read the most recent 5–10 posts. For each:
 
 If they have no public activity → note that ("No recent posts visible publicly").
 
-### Step 2e — Analyse and store research (hollow seam A)
+### Step 2e — Analyse and store research (canonical: backend prompt; this is the fallback)
 
-This is **seam A**. In V2 the analysis becomes a server-side MCP call. In V1 you do the analysis yourself.
+**Canonical path:** fetch the `research_analyze` template from `GET /api/mcp/prompts/research_analyze`, substitute placeholders (`{{profile_raw}}`, `{{activity_raw}}`, `{{offer_summary}}`, `{{icp_summary}}`, `{{prospect_*}}`), run that prompt. See "Prompts come from the backend" near the top of this file.
 
-Heuristics for analysis:
+**The heuristics below are the fallback** — used only when the backend prompt is unreachable. Iterate quality via the backend prompt, not here.
+
+Heuristics for analysis (fallback):
 
 - **Recency cliff**: a post in the last 7 days is hot. 7-30 days is warm. 30-90 days is lukewarm. >90 days is cold.
 - **Topical hits**: does any recent post touch on the user's offer space? Be specific — "post about scaling sales teams" matches a sales-coach offer, "post about a recent funding round" matches a B2B SaaS offer. Generic "leadership lessons" posts are weak signals.
@@ -320,9 +369,11 @@ If `<project-dir>/contacts/<slug>/notes.md` does NOT exist, create the directory
 
 If notes.md already exists, leave it completely untouched. The user owns this file.
 
-## Phase 3 — Draft a Greg-style opener (hollow seam B)
+## Phase 3 — Draft a Greg-style opener (canonical: backend prompt; this is the fallback)
 
-This is **seam B**. In V2 the drafting becomes a server-side MCP call. In V1 you do it yourself using the methodology below.
+**Canonical path:** fetch the `draft_opener` template from `GET /api/mcp/prompts/draft_opener`, substitute placeholders, run that prompt. See "Prompts come from the backend" near the top of this file.
+
+**This Phase 3 section is the fallback** — used only when the backend prompt is unreachable. The methodology below is intentionally thin baseline, not the canonical IP. Iterate quality via the backend prompt, not here.
 
 ### What a Greg-style opener IS
 
