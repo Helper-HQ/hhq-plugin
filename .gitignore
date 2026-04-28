@@ -6,6 +6,9 @@ Thumbs.db
 .hhq/
 .sales-helper/
 
+# Claude Code session cache
+.claude/
+
 # Editor / IDE
 .vscode/
 .idea/

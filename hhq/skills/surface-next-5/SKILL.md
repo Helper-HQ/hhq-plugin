@@ -1,6 +1,6 @@
 ---
 name: surface-next-5
-description: On-demand prospect surfacing. Triggers when the user says "get me the next 5 prospects", "who should I reach out to", "give me 5 leads", "find me some prospects", or similar. Reads the user's config + master contacts from the Helper HQ backend, filters out ineligible contacts (already-contacted, paused, disqualified, recently-surfaced within a 30-day cooldown), ranks the rest by the user's weighted signals using ONLY data available from the contact record, surfaces the top 5 with one-line signal-referenced reasoning per prospect, lets the user drop / swap, then persists the confirmed batch via PUT /api/me/current-batch and updates each contact's status to `surfaced`. Run AFTER onboard-user and ingest-contacts have run at least once.
+description: On-demand prospect surfacing. Triggers when the user says "get me the next 5 prospects", "who should I reach out to", "give me 5 leads", "find me some prospects", or similar. Reads the user's config + master contacts from the Helper HQ backend (using `?surfacable=1` so contacts already in the active pipeline are excluded server-side), filters the remaining set on status + recently-messaged cooldown, ranks the rest by the user's weighted signals using ONLY data available from the contact record, surfaces the top 5 with one-line signal-referenced reasoning per prospect, lets the user drop / swap, then persists the confirmed batch via PUT /api/me/current-batch and updates each contact's status to `surfaced`. Run AFTER onboard-user and ingest-contacts have run at least once.
 ---
 
 # Surface Next 5 — Sales Helper Lite
@@ -57,11 +57,13 @@ Hold the config in memory for ranking.
 
 ### Step B — Fetch contacts
 
-`GET <backend_url>/api/me/contacts?per_page=500&page=1`
+`GET <backend_url>/api/me/contacts?surfacable=1&per_page=500&page=1`
 
-If `total > 500`, page through additional pages (`page=2`, etc.) until you have all of them. Don't surface if total is `0` — tell the user "No contacts yet — drop in your LinkedIn export when it arrives." Stop.
+The `surfacable=1` filter is server-side and excludes any contact whose `pipeline_stage_id` is set to anything other than the user's Lead stage — so contacts already in the active pipeline (Outreach sent / In conversation / Meeting booked / Proposal sent / Customer / Not a fit) never reach the ranker. Null-stage contacts (the default for fresh imports) and explicit-Lead contacts both pass through.
 
-The summary endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, status, last_surfaced_at, last_messaged_at, message_count — that's enough for eligibility + pre-filter + ranking. You do NOT need the heavy fields (research, notes, messages) for surfacing.
+If `total > 500`, page through additional pages (`page=2`, etc.) until you have all of them. Don't surface if total is `0` — tell the user honestly: "No surfacable contacts right now — either everything's already in your active pipeline (`https://hhq.ngrok.dev/pipeline`), or you haven't imported any yet. Drop a LinkedIn export, business card scan, spreadsheet, or connect Gmail to bring more in." Stop.
+
+The summary endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, status, pipeline_stage_id, last_surfaced_at, last_messaged_at, message_count — that's enough for eligibility + pre-filter + ranking. You do NOT need the heavy fields (research, notes, messages) for surfacing.
 
 If checks pass, continue without ceremony — no yes/no gate at the top, the user just asked for 5 prospects, give them 5 prospects.
 
@@ -96,7 +98,7 @@ Cooldown is 30 days for both the status cooldown and the recently-messaged filte
 
 If after filtering there are **zero eligible contacts**, tell the user honestly:
 
-> "Nothing eligible right now — looks like everyone's either already contacted, paused, or in the 30-day cooldown after a recent surface. Either wait a bit, mark some as paused/disqualified, or import a fresh export."
+> "Nothing eligible right now — looks like everyone's either already contacted, paused, in the 30-day cooldown after a recent surface, or in your active pipeline (`https://hhq.ngrok.dev/pipeline`). Either wait a bit, mark some as paused/disqualified, or bring more contacts in (LinkedIn export, business card scan, spreadsheet, or Gmail connect)."
 
 And stop.
 

@@ -103,6 +103,38 @@ This file is the canonical place for auth state across all four V1 skills. Other
 
 If the user is re-onboarding (existing auth file), overwrite it.
 
+## Phase 0.5 — Gmail connector prereq check
+
+Run this immediately after activation succeeds. **Hard gate.** Helper HQ uses Claude's Gmail connector to ingest the user's address book and recent correspondence — without it, the Gmail-driven flows (auto-update "In conversation" stage when active back-and-forth is detected, surface bidirectional correspondents as warm prospects) won't work, and bringing it up *after* 15 minutes of setup is a worse experience than checking now.
+
+### Step 0.5a — Tool introspection
+
+Look at the tools available in your current session. If you can see ANY tools whose names map to Gmail operations — `search_threads`, `list_drafts`, `get_thread`, `list_labels`, `create_draft`, `create_label` (typically prefixed with `mcp__<some-uuid>__` in the function list) — the connector is installed. Skip to "If installed" below.
+
+If you cannot see any Gmail-prefixed tools, the connector is not loaded for this session — go to Step 0.5b.
+
+### Step 0.5b — Halt and tell the user
+
+Tell the user honestly and briefly:
+
+> "Quick prereq before we go further — Helper HQ uses Claude's Gmail connector to ingest your address book and recent correspondence. I can't see it loaded in this session.
+>
+> Could you install it? In Cowork: Settings → Connectors → Gmail. In Claude.ai: Settings → Connectors → Gmail.
+>
+> Once it's connected, start a new chat in this project and say 'set me up' again."
+
+Then STOP. Do NOT continue with the intro, fit check, LinkedIn export walkthrough, or anything else. The connector is required for this product.
+
+Do NOT try to work around the absence (no "we'll skip Gmail for now" path). The Gmail-driven stage transitions and warm-correspondent surfacing are core to how the product works as of v0.9.
+
+### If installed
+
+Acknowledge briefly and continue:
+
+> "Gmail connector detected — good. Continuing."
+
+(Or just move into the intro without ceremony — the acknowledgment is optional. What matters is the gate fails closed when the connector is missing.)
+
 ## Conversational style
 
 - One question at a time. Adapt to their answers. Just flow from question to question — **no yes/no gate between every question**.
@@ -116,7 +148,7 @@ If the user is re-onboarding (existing auth file), overwrite it.
 
 Run the intro AFTER Phase 0 succeeds, so the user knows their licence activated cleanly before you start the deep dive.
 
-> "Welcome to Sales Helper Lite. Your licence is active. Here's what I do: I look across your LinkedIn connections and surface 5 prospects at a time worth a personal opener — based on real signals like recent posts, role changes, or things they've shipped. Then I draft a short, specific opening message for each, you review and send. The magic is in the messages; sending is the easy part.
+> "Welcome to Sales Helper Lite. Your licence is active. Here's what I do: I look across your contacts — LinkedIn connections, business cards you've scanned, spreadsheets and CRM exports you've imported, and recent Gmail correspondents — and surface 5 prospects at a time worth a personal opener, based on real signals like recent posts, role changes, or things they've shipped. Then I draft a short, specific opening message for each. You review and send. The magic is in the messages; sending is the easy part.
 >
 > First step is kicking off your LinkedIn connections export — LinkedIn takes up to a day to email it back, so we want that timer running. While it's cooking we'll dial in your offer and your target prospect so the messages I draft for you land specifically. About 15 minutes in total.
 >
@@ -164,9 +196,29 @@ If they're hesitant about messages (privacy, legal, etc.), respect it — tell t
 
 If they said no to the walkthrough entirely → save `linkedin_export.requested_at: null`. Tell them they can run `ingest-contacts` whenever they have CSVs ready, and continue with the rest of onboarding regardless — offer / ICP / signals are useful work either way.
 
+## Phase 2.5 — Existing pipeline import (optional)
+
+While LinkedIn is preparing their archive, ask whether the user already tracks customers or pipeline somewhere we can import now. This lets the user land in the deep dive with their `/pipeline` view non-empty from day one rather than waiting for the LinkedIn export and then scrolling through 1000+ Lead-stage strangers.
+
+> "Quick one before the deep dive — do you already track your existing customers or pipeline somewhere? If you have a spreadsheet, CSV, or CRM export (HubSpot, Salesforce, Pipedrive — any of those), drop it now and I'll bring it in so your pipeline is complete from day one. (yes — drop a file / no / skip)"
+
+**If yes (file dropped or path provided):**
+
+Invoke `ingest-contacts` inline. The Spreadsheet / CRM branch will run — column mapping, stage-label mapping if there's a status column, then POST to import. When it returns, save `existing_pipeline_imported: true` and the result counts to skill memory, and continue.
+
+If the import fails partway (network, validation), tell the user briefly and offer to skip and continue — don't grind on it. They can re-run `ingest-contacts` later.
+
+**If no / skip:**
+
+Save `existing_pipeline_imported: false`. Tell the user briefly:
+
+> "All good — you can drop a spreadsheet or CRM export any time later by saying 'import my spreadsheet' or 'I have a CRM export'."
+
+And continue.
+
 Then transition into the deep dive:
 
-> "Good — that's the slow thing handled. While LinkedIn prepares the file, let's dial in your offer and your target. This is the work that makes the messages I draft for you actually land."
+> "Good — that's the slow stuff handled. While LinkedIn prepares the file, let's dial in your offer and your target. This is the work that makes the messages I draft for you actually land."
 
 ## Phase 3 — Offer
 
