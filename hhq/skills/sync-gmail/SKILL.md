@@ -38,12 +38,14 @@ Do NOT trigger if the user is mid-onboarding (the Gmail connector check happens 
 
 Use the `mcp__ccd_directory__request_directory` tool to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
 
-Read `<project-dir>/.hhq-auth.json`. If missing → "No auth file — say 'set me up' to onboard." Stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-auth.json` (preserving other fields).
+1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `~/.hhq/machine.json` (preserving other fields).
 2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
@@ -219,7 +221,7 @@ Compute `<skipped one-way>` as `<total digest size> - <total batch posted>`. If 
 - Do NOT overwrite an existing contact's `source` to `gmail_messages` — preserve whatever it was (LinkedIn, business card, spreadsheet). Source tells us where the contact ORIGINATED, not the most recent touch.
 - Do NOT create non-bidirectional new contacts. One-way correspondents (newsletters, notifications) are noise — surfacing them dilutes the prospect ranking.
 - Do NOT ingest messages older than 30 days for contact creation. The brief's "active correspondent" window is 30 days hard.
-- Do NOT modify `.hhq-auth.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
 - Do NOT log the JWT, licence key, or auth file contents. Don't echo any email body content even if accidentally read.
 
 ## Edge cases to handle gracefully

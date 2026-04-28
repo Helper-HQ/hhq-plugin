@@ -1,6 +1,6 @@
 ---
 name: surface-next-5
-description: On-demand prospect surfacing. Triggers when the user says "get me the next 5 prospects", "who should I reach out to", "give me 5 leads", "find me some prospects", or similar. Reads the user's config + master contacts from the Helper HQ backend (using `?surfacable=1` so contacts already in the active pipeline are excluded server-side), filters the remaining set on status + recently-messaged cooldown, ranks the rest by the user's weighted signals using ONLY data available from the contact record, surfaces the top 5 with one-line signal-referenced reasoning per prospect, lets the user drop / swap, then persists the confirmed batch via PUT /api/me/current-batch and updates each contact's status to `surfaced`. Run AFTER onboard-user and ingest-contacts have run at least once.
+description: On-demand prospect surfacing — campaign-scoped. Triggers when the user says "get me the next 5 prospects", "who should I reach out to", "give me 5 leads", "find me some prospects", or similar. Resolves the current campaign from `<project-dir>/.hhq-campaign.json` (default `default`), reads that campaign's offer / ICP / signals plus eligible contacts (server-side filter on per-campaign cooldown, hard 7-day global lockout via last_contacted_at, recently-messaged 30-day filter, pipeline stage), ranks the rest by the campaign's weighted signals, surfaces the top 5 with one-line signal-referenced reasoning AND any cross-campaign warnings (someone surfaced in another campaign in the last 30 days), lets the user drop / swap, then persists the confirmed batch via PUT /api/me/campaigns/{slug}/current-batch and writes per-campaign contact status via PUT /api/me/campaigns/{slug}/contacts/{contactSlug}. Run AFTER onboard-user and ingest-contacts have run at least once.
 ---
 
 # Surface Next 5 — Sales Helper Lite
@@ -21,21 +21,31 @@ Trigger when the user says any variant of:
 
 Do NOT trigger if the user is asking for one specific person, asking general questions, or working with someone already drafted.
 
-## Phase 0 — Auth
+## Phase 0 — Auth and campaign
 
-Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI).
+### Step 0a — Resolve auth (machine-level)
 
-Read `<project-dir>/.hhq-auth.json`. If missing → "Looks like you haven't onboarded yet — say 'set me up' to get started." Stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. Continue.
+- **Not found and no legacy file** → "Looks like you haven't onboarded yet — say 'set me up' to get started." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-auth.json` (preserving other fields).
-2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403 license_inactive / machine_limit_reached, tell the user and stop.
+1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `~/.hhq/machine.json` (preserving other fields).
+2. On 401, re-activate via `POST /api/activate` with `license_key` + `machine_id`. Save the new token. On 403 license_inactive / machine_limit_reached, tell the user and stop.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk` (`-s` silent, `-k` is harmless and covers any unusual cert situations).
 
 Never log the JWT or licence key.
+
+### Step 0b — Resolve current campaign (project-level)
+
+Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
+
+Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write it with `{"campaign_slug": "default"}` and use `default`.
+
+This skill operates inside that campaign's context — its offer, ICP, signals, batch, and per-contact cooldown state. The user can run a parallel campaign in a separate Cowork project; auth is shared, campaign context is not.
 
 ## Remote-skill seam (V1 dogfood)
 
@@ -45,64 +55,67 @@ For V1 dogfood, do the ranking in-context using your own reasoning over the supp
 
 ## Pre-flight checks
 
-### Step A — Fetch config
+### Step A — Fetch configs
 
-`GET <backend_url>/api/me/config`
+User-level (voice): `GET <backend_url>/api/me/config` — hold the response as `user_config`. Mostly informational here; voice is used in research-and-draft, not surfacing.
 
-- HTTP 200 with `{"config": {...}}` and `offer`, `icp`, `signals.weighted` populated → continue.
-- HTTP 200 with `{"config": null}` or missing required fields → tell the user "Onboarding's not finished yet — say 'set me up' to fill it in." Stop.
+Campaign-level (offer / ICP / signals): `GET <backend_url>/api/me/campaigns/<campaign_slug>/config` — hold as `campaign_config`.
+
+- HTTP 200 with `campaign_config` having `offer`, `icp`, `signals.weighted` populated → continue.
+- HTTP 200 with `{"config": null}` or missing required fields → "This campaign (`<campaign_slug>`) doesn't have an offer / ICP / signals configured yet. Run `/hhq:new-campaign` if it's brand new, or `offer-review` / `icp-discovery` to fill in the gaps." Stop.
+- HTTP 404 `campaign_not_found` → "This project is pinned to campaign `<campaign_slug>` but the backend doesn't have it. Either fix `.hhq-campaign.json` or run `/hhq:new-campaign` to recreate." Stop.
 - HTTP 401 → run the auth fallback in Phase 0 once, retry. If it fails again, tell the user to re-onboard.
 
-Hold the config in memory for ranking.
+Use `campaign_config.offer`, `.offer_hook`, `.offer_profile`, `.icp`, `.icp_profile`, `.signals` for ranking.
 
-### Step B — Fetch contacts
+### Step B — Fetch contacts (campaign-scoped)
 
-`GET <backend_url>/api/me/contacts?surfacable=1&per_page=500&page=1`
+`GET <backend_url>/api/me/campaigns/<campaign_slug>/contacts?surfacable=1&per_page=500&page=1`
 
-The `surfacable=1` filter is server-side and excludes any contact whose `pipeline_stage_id` is set to anything other than the user's Lead stage — so contacts already in the active pipeline (Outreach sent / In conversation / Meeting booked / Proposal sent / Customer / Not a fit) never reach the ranker. Null-stage contacts (the default for fresh imports) and explicit-Lead contacts both pass through.
+The `surfacable=1` filter is **fully backend-enforced** in v0.10+:
 
-If `total > 500`, page through additional pages (`page=2`, etc.) until you have all of them. Don't surface if total is `0` — tell the user honestly: "No surfacable contacts right now — either everything's already in your active pipeline (`https://hhq.ngrok.dev/pipeline`), or you haven't imported any yet. Drop a LinkedIn export, business card scan, spreadsheet, or connect Gmail to bring more in." Stop.
+- **Pipeline stage** — excludes contacts whose `pipeline_stage_id` is set to anything other than the user's Lead stage. Null-stage and explicit-Lead pass.
+- **Hard global lockout (7 days)** — excludes any contact whose `contacts.last_contacted_at` (across any campaign) is within the last 7 days. You just messaged them; don't surface again anywhere.
+- **Recently-messaged on LinkedIn (30 days)** — excludes contacts whose `last_messaged_at` is within the last 30 days (LinkedIn historical, from the messages CSV digest).
+- **Per-campaign cooldown (30 days)** — excludes contacts whose status in *this campaign* is `contacted` / `paused` / `disqualified`, OR whose `campaign_contacts.last_surfaced_at` for this campaign is within the last 30 days.
 
-The summary endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, status, pipeline_stage_id, last_surfaced_at, last_messaged_at, message_count — that's enough for eligibility + pre-filter + ranking. You do NOT need the heavy fields (research, notes, messages) for surfacing.
+Each returned contact also includes a `cooldown_warnings` array — empty for most, but for any contact who was surfaced or contacted in **another** campaign within the last 30 days, the array contains:
 
-If checks pass, continue without ceremony — no yes/no gate at the top, the user just asked for 5 prospects, give them 5 prospects.
+```json
+[
+  {
+    "campaign_slug": "p2-investors",
+    "campaign_name": "Sunburnt Investors",
+    "status": "drafted",
+    "last_surfaced_at": "2026-04-19T..."
+  }
+]
+```
 
-## Phase 1 — Eligibility filter
+You'll surface these to the user in Phase 4 as warnings ("Tim was surfaced in Sunburnt Investors 12 days ago — still add to this batch?") so they can swap if it'd look spammy.
 
-For each contact, keep as **eligible** only if **all** of these pass:
+If `total > 500`, page through additional pages until you have all of them.
 
-**Status filter:**
+If `total` is `0` → "No surfacable contacts right now in `<campaign_slug>` — either everything's already in your active pipeline, in cooldown, or you haven't imported any yet. Drop a LinkedIn export, business card scan, spreadsheet, or connect Gmail to bring more in." Stop.
 
-| `status` | `last_surfaced_at` | Pass? |
-|---|---|---|
-| `new` | (any) | ✅ yes |
-| `surfaced` | within last 30 days | ❌ no — cooldown |
-| `surfaced` | over 30 days ago | ✅ yes — eligible again |
-| `drafted` | within last 30 days | ❌ no — already in user's queue |
-| `drafted` | over 30 days ago | ✅ yes — old draft, never sent |
-| `contacted` | (any) | ❌ no — already messaged |
-| `paused` | (any) | ❌ no — user explicitly paused |
-| `disqualified` | (any) | ❌ no |
+The endpoint returns id, slug, first_name, last_name, headline, company, position, email, linkedin_url, pipeline_stage_id, **status (per-campaign)**, **last_surfaced_at (per-campaign)**, last_messaged_at, last_contacted_at, message_count, **cooldown_warnings**.
 
-**Recently-messaged filter (independent):**
+If checks pass, continue without ceremony — give them 5 prospects.
 
-| `last_messaged_at` | Pass? |
-|---|---|
-| null | ✅ yes — never messaged |
-| over 30 days ago | ✅ yes — out of cooldown |
-| within last 30 days | ❌ no — already in active conversation, don't draft a cold opener |
+## Phase 1 — Eligibility (backend-enforced, plus warnings)
 
-`last_messaged_at` comes from the messages digest in `ingest-contacts` (LinkedIn `messages.csv` summarised to one row per conversation partner). The point of this filter: if the user has been messaging someone in the last 30 days on LinkedIn, the plugin should *not* surface them as a fresh prospect to draft a cold opener for.
+In v0.10+ the backend pre-filters out everyone who fails any eligibility rule (status / per-campaign cooldown / hard global 7-day lockout / 30-day LinkedIn recently-messaged / pipeline stage). The list returned by Step B is already eligible — you don't re-filter.
 
-Cooldown is 30 days for both the status cooldown and the recently-messaged filter, hard-coded for V1. Do not invent a config knob for this.
+**You DO need to handle two cases the backend can't decide for you:**
 
-If after filtering there are **zero eligible contacts**, tell the user honestly:
+1. **Cross-campaign warnings** — for any returned contact with a non-empty `cooldown_warnings` array, you'll flag them when surfacing in Phase 4. They were surfaced or contacted in another campaign within the last 30 days, so adding them here might feel spammy. The user decides whether to keep or swap.
+2. **Empty result** — if `total` is 0, surface the empty-state message from Step B and stop.
 
-> "Nothing eligible right now — looks like everyone's either already contacted, paused, in the 30-day cooldown after a recent surface, or in your active pipeline (`https://hhq.ngrok.dev/pipeline`). Either wait a bit, mark some as paused/disqualified, or bring more contacts in (LinkedIn export, business card scan, spreadsheet, or Gmail connect)."
+If `total` is below 5, surface what you have and note it: "Only 4 eligible right now in `<campaign_slug>` — here they are."
 
-And stop.
+**Hard rule:** never surface a contact whose `cooldown_warnings` includes another campaign with `status: "contacted"` and `last_surfaced_at` within 7 days — backend should have already filtered this via `last_contacted_at`, but treat any such row as a defence-in-depth signal: skip silently and log to yourself.
 
-If eligible count is **less than 5**, surface what you have and note it: "Only 4 eligible right now — here they are."
+Cooldown values are hard-coded constants (7-day hard global, 30-day per-campaign, 30-day cross-campaign warn). Do not invent config knobs.
 
 ## Phase 2 — Pre-filter to ~50–100 candidates
 
@@ -148,7 +161,7 @@ Do NOT write generic reasoning like "Good fit for your ICP." That's useless to t
 
 ## Phase 4 — Surface the 5
 
-Present them as a numbered list:
+Present them as a numbered list. For any prospect with non-empty `cooldown_warnings`, append a short warning line beneath the reasoning so the user sees it before confirming:
 
 ```
 Here are 5 to look at:
@@ -156,13 +169,20 @@ Here are 5 to look at:
 1. **<Full Name>** — <Position>, <Company>
    <one-line signal-referenced reasoning>
    <linkedin URL if present>
+   ⚠ surfaced in <Campaign Name> <N> days ago — still include?
 
-2. ...
+2. **<Full Name>** — ...
+   <reasoning>
+   <linkedin URL>
 
-Look right? You can say "let's go", drop one ("not Greg"), or swap ("instead of Greg, give me someone in fintech").
+...
+
+Look right? You can say "let's go", drop one ("not Greg"), or swap ("instead of Greg, give me someone in fintech"). To skip a warning, drop that one and I'll replace.
 ```
 
-Keep formatting clean. No emoji. No more than the URL — no extra metadata, no scores, no signal breakdowns. The reasoning IS the signal breakdown, in plain language.
+Keep formatting clean. No emoji elsewhere. No scores or signal-weight breakdowns. The reasoning IS the signal breakdown, in plain language. The warning is the only extra line.
+
+If a prospect has multiple warnings (e.g. two other campaigns), pick the most recent one for the line. Format the days from `last_surfaced_at` to "today" rounded down.
 
 ## Phase 5 — Handle user edits
 
@@ -182,18 +202,18 @@ Once the user confirms the final list:
 
 ### Step 6a — Check for an existing open batch
 
-`GET <backend_url>/api/me/current-batch`
+`GET <backend_url>/api/me/campaigns/<campaign_slug>/current-batch`
 
 If `batch` is non-empty, tell the user:
 
-> "You have an open batch from <last surfaced_at, formatted readable> — overwrite with a fresh 5? (yes / no)"
+> "You have an open batch in `<campaign_slug>` from <last surfaced_at, formatted readable> — overwrite with a fresh 5? (yes / no)"
 
 If no → suggest they run research-and-draft on the existing batch instead. Stop.
 If yes → continue and overwrite below.
 
 ### Step 6b — Write the new current-batch
 
-`PUT <backend_url>/api/me/current-batch`
+`PUT <backend_url>/api/me/campaigns/<campaign_slug>/current-batch`
 
 Body:
 ```json
@@ -212,9 +232,9 @@ Body:
 
 Expect HTTP 200 with the saved batch echoed. On 422 (e.g. contact_id ownership check), something's wrong — tell the user and stop.
 
-### Step 6c — Update each contact's status
+### Step 6c — Update each contact's per-campaign status
 
-For each prospect in the batch, `PUT <backend_url>/api/me/contacts/{slug}` with body:
+For each prospect in the batch, `PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/{contactSlug}` with body:
 
 ```json
 {
@@ -223,7 +243,9 @@ For each prospect in the batch, `PUT <backend_url>/api/me/contacts/{slug}` with 
 }
 ```
 
-Only update prospects whose previous status was NOT already `contacted`, `paused`, or `disqualified` (defensive — eligibility filter should have excluded those, but recheck per row). Don't touch any other fields.
+This writes to `campaign_contacts` (the per-campaign join row), creating it if missing. The contact's user-level fields are not touched — only this campaign's view of the contact. Other campaigns retain their own status/cooldown for the same person.
+
+Only update prospects whose previous (per-campaign) status was NOT already `contacted`, `paused`, or `disqualified` (defensive — the surfacable filter should have excluded those, but recheck per row). Don't touch any other fields.
 
 ## Phase 7 — Hand off to research-and-draft
 
@@ -237,21 +259,21 @@ Do NOT do the research yourself in this skill. Do NOT draft any messages. That's
 
 - Do NOT do any LinkedIn enrichment, web fetch, or per-prospect research here. Pure list-based ranking.
 - Do NOT call `/api/mcp/rank_prospects` in V1 — leave that seam for V2. V1 ranks in-context.
-- Do NOT modify `.hhq-auth.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
-- Do NOT modify the user's config.
-- Do NOT surface more than 5. Hard cap, also enforced by the backend (`PUT /me/current-batch` rejects > 5).
+- Do NOT modify `~/.hhq/machine.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify the user's config or the campaign's config.
+- Do NOT surface more than 5. Hard cap, also enforced by the backend (`PUT /me/campaigns/{slug}/current-batch` rejects > 5).
 - Do NOT pad weak picks to fill 5 — if only 3 are good, surface 3.
 - Do NOT show numeric scores or signal-weight breakdowns to the user. The one-line reasoning is the explanation.
-- Do NOT bypass the cooldown for any prospect, ever.
+- Do NOT bypass the cooldown for any prospect, ever — even via the cross-campaign warning. The user can still choose to skip a warned prospect; you do not auto-skip.
 - Do NOT log the JWT, licence key, or auth file contents.
-- Do NOT write per-prospect files locally. Notes / research / messages all live on the backend now (`/api/me/contacts/{slug}`).
+- Do NOT write per-prospect files locally. Per-campaign research / messages live on the backend at `/api/me/campaigns/{slug}/contacts/{contactSlug}`.
 
 ## Edge cases to handle gracefully
 
 - **Empty position field on a contact** → still rankable on company/seniority signals; reduce its rank weight slightly.
 - **Empty company field** → company-based signals get zero, but role and seniority still rank.
 - **Master has fewer than 5 eligible contacts total** → surface what's eligible, be honest about the count.
-- **`/api/me/current-batch` already has an open batch** → handled in Step 6a.
+- **`/api/me/campaigns/{slug}/current-batch` already has an open batch** → handled in Step 6a.
 - **User has weighted signals that are all pass-2-only** (e.g. all about post recency / topical) → surface using best-available signals, and explicitly tell the user that their top signals will be applied in the research step rather than now.
 - **Signal weights array is empty or malformed** → fall back to equal weighting across the four list-evaluable signals; tell the user once.
 - **Backend down mid-flow** → if the GET /me/contacts call succeeded but a later PUT fails, you've shown the user 5 prospects you can't persist. Tell them honestly: "Showed you 5 but couldn't save the batch — backend's having a moment. Try again in a few minutes." Don't half-update individual contacts.

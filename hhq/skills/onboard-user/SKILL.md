@@ -12,8 +12,10 @@ This is the user's FIRST experience of the plugin. Be warm, brief, and conversat
 ## When this skill runs
 
 Trigger when:
-- No `.hhq-auth.json` exists in the project folder and the user is interacting with Sales Helper for the first time, or
+- No `~/.hhq/machine.json` exists on this machine (and no legacy `<project-dir>/.hhq-auth.json` to migrate from) and the user is interacting with Helper HQ for the first time, or
 - The user explicitly asks to re-onboard, reset, reconfigure, or "start over."
+
+If the user wants a *new campaign* (different offer / ICP from what's already set up), route them to `/hhq:new-campaign` instead — this skill is for first-time setup or full reset.
 
 ## Backend URL (V1 dogfood)
 
@@ -29,26 +31,34 @@ This is a stable ngrok subdomain pointing at the local Herd backend during V1 do
 
 This phase has to happen first, before anything else, because the rest of onboarding writes to the backend.
 
+Auth is stored at the **machine level** in `~/.hhq/machine.json` (so opening a new Cowork project for a new campaign does NOT consume a machine slot — same machine, same auth). Each project pins itself to a specific campaign via `<project-dir>/.hhq-campaign.json`.
+
 ### Step 0a — Get the project folder
 
 Use the `mcp__ccd_directory__request_directory` tool to get a path to the persistent project folder. The user will accept a permission prompt the first time.
 
-Save the returned path as `<project-dir>` for the rest of this skill. All subsequent file reads and writes go inside that path.
+Save the returned path as `<project-dir>` for the rest of this skill. The campaign-pin file lives there.
 
-If the tool isn't available (e.g. running in local Claude Code CLI rather than Cowork), fall back to `~/.hhq/sales-helper/` and create it if missing. Document this fallback in a comment-style note.
+If the tool isn't available (local Claude Code CLI), fall back to `~/.hhq/sales-helper/` and create it if missing.
 
-### Step 0b — Check for an existing auth file
+### Step 0b — Check for existing machine auth
 
-If `<project-dir>/.hhq-auth.json` already exists:
-- Tell the user they've already activated and ask: "Re-run onboarding and overwrite your setup? (yes / no)"
-- If no → stop. If they want a partial change (refresh signals only, change offer), note that V1 doesn't have partial-update skills — full re-run is the only path.
-- If yes → continue. Keep the existing licence_key as the default for re-activation but allow the user to paste a different one.
+Read `~/.hhq/machine.json`.
 
-If no auth file → continue.
+- **Found and you are NOT explicitly re-onboarding** → tell the user: "Your machine is already activated. To create a new outbound campaign in this project, run `/hhq:new-campaign`. To redo your full setup (overwrite voice + default-campaign offer/ICP/signals), say 'redo onboarding' or 'start over'. (new campaign / redo onboarding / cancel)". Route accordingly. If "new campaign" → stop and tell them to run `/hhq:new-campaign`. If "redo onboarding" → continue, reuse machine_id and licence_key from the existing file. If "cancel" → stop.
+- **Found and user IS re-onboarding** → continue, reuse machine_id and licence_key.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy auth file from before v0.10. Migrate it inline:
+  1. `mkdir -p ~/.hhq`.
+  2. Copy `<project-dir>/.hhq-auth.json` to `~/.hhq/machine.json`.
+  3. Delete `<project-dir>/.hhq-auth.json`.
+  4. Then proceed as if "Found and you are NOT explicitly re-onboarding" above.
+- **Not found and no legacy file** → genuine first-time setup. Continue to Step 0c.
 
 ### Step 0c — Get the licence key
 
-Ask the user:
+Skip if reusing an existing licence key from the machine.json (re-onboarding case).
+
+Otherwise ask:
 
 > "First, paste your Helper HQ licence key. It looks like `hhq_...` and you got it in your purchase email."
 
@@ -56,7 +66,9 @@ Validate the shape: starts with `hhq_`, length at least 16 chars. If invalid, as
 
 ### Step 0d — Activate
 
-Generate a UUIDv4 as the machine_id. Use `powershell -NoProfile -c '[guid]::NewGuid().ToString()'` on Windows or `uuidgen` on Mac/Linux. Strip any whitespace.
+For first-time setup: generate a UUIDv4 as the `machine_id`. Use `powershell -NoProfile -c '[guid]::NewGuid().ToString()'` on Windows or `uuidgen` on Mac/Linux. Strip whitespace.
+
+For re-onboarding: reuse the existing `machine_id` from `~/.hhq/machine.json`.
 
 Call the backend:
 
@@ -65,43 +77,52 @@ POST <backend-url>/api/activate
 Content-Type: application/json
 
 {
-  "license_key": "<the licence key the user pasted>",
-  "machine_id": "<the generated UUID>"
+  "license_key": "<the licence key>",
+  "machine_id": "<the UUID>"
 }
 ```
 
-Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool. (`-s` silent, `-k` is harmless and covers any unusual cert situations.)
+Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool.
 
 Handle the response:
 
-- **HTTP 200** → parse the JSON. Save `.hhq-auth.json` (Step 0e) and continue.
-- **HTTP 404 `license_not_found`** → the licence key is wrong. Ask the user to re-paste from their purchase email. Loop back to Step 0c.
-- **HTTP 403 `license_inactive`** → the licence has been revoked, suspended, or expired. Tell the user to contact support at `help@helperhq.co` and stop.
-- **HTTP 403 `machine_limit_reached`** → the user has activated this licence on 3 machines / projects already. Tell them: "Your licence is at its 3-machine limit. Sales Helper is designed to be run from one project — opening a new project counts as a new machine. Contact help@helperhq.co if you need to migrate." Stop.
-- **HTTP 422** → validation error, very unlikely with our generated input. Show the error and stop.
-- **Network error or non-JSON response** → tell the user the backend isn't reachable, give them the URL, and stop. Don't write a partial auth file.
+- **HTTP 200** → parse the JSON. Backend auto-creates a `default` campaign for new users on activation. Save `~/.hhq/machine.json` (Step 0e) and continue.
+- **HTTP 404 `license_not_found`** → ask the user to re-paste from their purchase email. Loop back to Step 0c.
+- **HTTP 403 `license_inactive`** → revoked / suspended / expired. Tell user to contact `help@helperhq.co` and stop.
+- **HTTP 403 `machine_limit_reached`** → "Your licence is at its 3-machine limit. Auth is per-machine in v0.10+ — running multiple campaigns from the same laptop does NOT consume extra slots. If you really need more machines, contact `help@helperhq.co`." Stop.
+- **HTTP 422 / network error** → show the error, don't write a partial auth file, stop.
 
-### Step 0e — Save the auth file
+### Step 0e — Save the auth and campaign files
 
-Write `<project-dir>/.hhq-auth.json`:
+Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`). Write `~/.hhq/machine.json`:
 
 ```json
 {
   "backend_url": "https://hhq.ngrok.dev",
   "license_key": "<the licence key>",
-  "machine_id": "<the generated UUID>",
+  "machine_id": "<the UUID>",
   "jwt": "<the token returned by /api/activate>",
-  "jwt_expires_at": "<the expires_at returned by /api/activate>",
-  "tier": "<the tier returned by /api/activate (lite|pro|elite)>",
-  "helpers": ["<the helpers array returned by /api/activate>"]
+  "jwt_expires_at": "<the expires_at returned>",
+  "tier": "<lite|pro|elite>",
+  "helpers": ["<the helpers array>"]
 }
 ```
 
-Also update `tier` and `helpers` in the auth file every time you refresh or re-activate, since they could change if the user upgrades tier or has a helper added to their licence.
+The first time this writes, Claude Code will ask for permission to write outside the working directory. Approve once — subsequent writes are silent.
 
-This file is the canonical place for auth state across all four V1 skills. Other skills read it on every invocation.
+Update `tier` and `helpers` in this file every refresh/re-activation in case they changed.
 
-If the user is re-onboarding (existing auth file), overwrite it.
+Also write `<project-dir>/.hhq-campaign.json`:
+
+```json
+{
+  "campaign_slug": "default"
+}
+```
+
+This pins the current Cowork project to the `default` campaign. Subsequent skills (surface-next-5, research-and-draft, etc.) read this file to know which campaign's context to operate in. To run a parallel outbound effort with a different offer/ICP, the user opens a new Cowork project and runs `/hhq:new-campaign` there.
+
+If re-onboarding (machine.json already existed), overwrite both files.
 
 ## Phase 0.5 — Gmail connector prereq check
 
@@ -578,25 +599,31 @@ Move directly into Phase 8. **No yes/no gate.**
 
 ## Phase 8 — Save and finish
 
-PUT the config to the backend.
+Save the answers to the backend in **two PUTs**:
 
-Read `<project-dir>/.hhq-auth.json` to get `backend_url` and `jwt`.
+1. User-level config (voice, fit, linkedin_export, quick_start, tier, onboarded_at, version) → `PUT /api/me/config`.
+2. Default campaign config (offer*, icp*, signals) → `PUT /api/me/campaigns/default/config`.
 
-### Step 8.0 — GET current config first (merge, don't clobber)
+Read `~/.hhq/machine.json` to get `backend_url` and `jwt`.
 
-If `_deep_skills_used.offer_review` or `_deep_skills_used.icp_discovery` is true in skill memory, those skills already PUT their fields during onboarding. Don't overwrite them.
+### Step 8.0 — GET current configs first (merge, don't clobber)
 
-`GET <backend_url>/api/me/config` and hold the response as `existing_config`.
+If `_deep_skills_used.offer_review` or `_deep_skills_used.icp_discovery` is true in skill memory, those skills already PUT their fields to the campaign during onboarding. Don't overwrite them.
 
-Build the payload below from skill memory, but for any deep-skill-owned fields, **prefer `existing_config` values** over what's in skill memory:
+```
+GET <backend_url>/api/me/config                       → existing_user_config
+GET <backend_url>/api/me/campaigns/default/config     → existing_campaign_config
+```
 
-- If `_deep_skills_used.offer_review` → use `existing_config.offer`, `existing_config.offer_hook`, `existing_config.offer_profile`.
-- If `_deep_skills_used.icp_discovery` → use `existing_config.icp`, `existing_config.icp_profile`.
+For any deep-skill-owned fields, prefer the `existing_campaign_config` values over what's in skill memory:
+
+- If `_deep_skills_used.offer_review` → use `existing_campaign_config.offer`, `.offer_hook`, `.offer_profile`.
+- If `_deep_skills_used.icp_discovery` → use `existing_campaign_config.icp`, `.icp_profile`.
 - Otherwise → use the values you captured in Phase 3 / Phase 4.
 
-All other fields (fit, voice_profile, signals, linkedin_export, quick_start, version, tier, onboarded_at) come from skill memory regardless.
+All other fields come from skill memory.
 
-### Step 8.1 — Build the payload
+### Step 8.1 — Build the user-level payload
 
 ```json
 {
@@ -606,17 +633,6 @@ All other fields (fit, voice_profile, signals, linkedin_export, quick_start, ver
   "fit": {
     "sales_owner": "self" | "team",
     "continued_after_team_warning": true
-  },
-  "offer": "verbatim one-sentence offer",
-  "offer_hook": "verbatim 1-2 sentence hook from Phase 3b",
-  "offer_profile": {
-    "summary": "...",
-    "key_benefits": ["...", "..."],
-    "objection_patterns": ["...", "..."],
-    "canonical_phrases": ["...", "..."],
-    "sources": ["https://...", "..."],
-    "failed_sources": ["https://..."],
-    "generated_at": "ISO-8601 timestamp"
   },
   "voice_profile": {
     "summary": "1-2 sentence description of how the user talks",
@@ -629,6 +645,35 @@ All other fields (fit, voice_profile, signals, linkedin_export, quick_start, ver
       "linkedin_messages": ["https://..."],
       "brand_guide": "text | pdf | docx | url | null"
     },
+    "failed_sources": ["https://..."],
+    "generated_at": "ISO-8601 timestamp"
+  },
+  "linkedin_export": {
+    "requested_at": "ISO-8601 timestamp or null",
+    "messages_requested": true
+  },
+  "quick_start": {
+    "urls": ["https://www.linkedin.com/in/...", "..."],
+    "requested_at": "ISO-8601 timestamp",
+    "status": "queued"
+  }
+}
+```
+
+`PUT <backend_url>/api/me/config` with `{"config": <payload>}`. Expect HTTP 200.
+
+### Step 8.2 — Build the default-campaign payload
+
+```json
+{
+  "offer": "verbatim one-sentence offer",
+  "offer_hook": "verbatim 1-2 sentence hook from Phase 3b",
+  "offer_profile": {
+    "summary": "...",
+    "key_benefits": ["...", "..."],
+    "objection_patterns": ["...", "..."],
+    "canonical_phrases": ["...", "..."],
+    "sources": ["https://...", "..."],
     "failed_sources": ["https://..."],
     "generated_at": "ISO-8601 timestamp"
   },
@@ -648,42 +693,25 @@ All other fields (fit, voice_profile, signals, linkedin_export, quick_start, ver
       { "name": "industry-match", "description": "...", "weight": 0.13 },
       { "name": "active-poster", "description": "...", "weight": 0.07 }
     ]
-  },
-  "linkedin_export": {
-    "requested_at": "ISO-8601 timestamp or null",
-    "messages_requested": true
-  },
-  "quick_start": {
-    "urls": ["https://www.linkedin.com/in/...", "..."],
-    "requested_at": "ISO-8601 timestamp",
-    "status": "queued"
   }
 }
 ```
 
-Call:
+`PUT <backend_url>/api/me/campaigns/default/config` with `{"config": <payload>}`. Expect HTTP 200.
 
-```
-PUT <backend_url>/api/me/config
-Authorization: Bearer <jwt>
-Content-Type: application/json
-
-{ "config": <the payload above> }
-```
-
-Expect HTTP 200 with the saved config echoed back. If the call fails:
-- **HTTP 401** → JWT is bad somehow. Tell the user their session expired, ask them to re-run onboarding. Stop.
-- **HTTP 5xx or network error** → tell the user the backend's not responding right now, suggest they retry in a moment. Don't lose the answers — keep them in conversation context so a retry can re-PUT.
+If either call fails:
+- **HTTP 401** → JWT is bad. Tell the user their session expired, ask them to re-run onboarding. Stop.
+- **HTTP 5xx or network error** → tell the user the backend's not responding, suggest they retry in a moment. Keep the answers in conversation context so a retry can re-PUT.
 
 The `tier` field is set to `"lite"` for V1. Pro and Elite tiers will check this field at runtime to gate features when they ship.
 
-Do NOT write any other local files. There is no longer a `contacts/` folder, no `voice-profile.md`, no `business-context.md` — those are V2 and live backend-side when they ship.
+Do NOT write any other local files. The only local files are `~/.hhq/machine.json` (per-machine auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin). Everything else lives backend-side.
 
 Then close warmly. **Two close variants depending on whether Phase 7 captured quick-start URLs:**
 
 **Variant A — quick-start URLs were saved (`config.quick_start.urls.length > 0`):**
 
-> "All set — everything's saved and updated. You'll see a couple of small files in your project folder; be sure to keep them — that's how we know it's you across chats.
+> "All set — everything's saved. Your machine licence is at `~/.hhq/machine.json` and this project is pinned to your `default` campaign via `.hhq-campaign.json`. Keep both around.
 >
 > Your LinkedIn export is in flight (usually a few hours, sometimes up to 24). And — your `<N>` quick-start prospects are queued. Whenever you're ready, say 'let's go on quick start' and I'll research each, draft an opener, and have them ready to send in a few minutes.
 >
@@ -693,7 +721,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant B — no quick-start URLs (`config.quick_start` is null):**
 
-> "All set — everything's saved and updated. You'll see a couple of small files in your project folder; be sure to keep them — that's how we know it's you across chats.
+> "All set — everything's saved. Your machine licence is at `~/.hhq/machine.json` and this project is pinned to your `default` campaign via `.hhq-campaign.json`. Keep both around.
 >
 > Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
 >
@@ -701,7 +729,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 ## Things you must NOT do
 
-- Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local file is `.hhq-auth.json` in the project folder.
+- Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local files are `~/.hhq/machine.json` (per-machine auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin).
 - Do NOT save raw page contents, PDFs, DOCX text, or LinkedIn message bodies anywhere. Synthesis is the only persistent artifact — distil and forget the source content.
 - Do NOT save uploaded files to disk or to the backend. PDF/DOCX inputs in Phase 6a are read inline; the file itself is the user's responsibility to keep.
 - Do NOT pressure for voice samples. Phase 6 is gravy — if the user skips, save `voice_profile: null`; they can build it later with `tune-voice`.
@@ -711,4 +739,4 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
 - Do NOT promise weekly cadence — V1 is on-demand only.
 - Do NOT promise Pro or Elite features. The `tier` field exists for forward compatibility, but V1 is Lite-only.
-- Do NOT log the licence key, JWT, or any contents of `.hhq-auth.json` in chat output. Those are secrets.
+- Do NOT log the licence key, JWT, or any contents of `~/.hhq/machine.json` in chat output. Those are secrets.

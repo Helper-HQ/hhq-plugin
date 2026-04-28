@@ -10,19 +10,19 @@ When invoked, render a clean directory of every Helper HQ skill, grouped by help
 
 Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
 
-Try to read `<project-dir>/.hhq-auth.json` (purely to detect onboarding status — the listing itself doesn't depend on its contents).
+Try to read `~/.hhq/machine.json` (purely to detect onboarding status — the listing itself doesn't depend on its contents). If it's missing, also check the legacy `<project-dir>/.hhq-auth.json` so users on pre-v0.10 installs aren't shown the activation prompt incorrectly.
 
 Do NOT call any backend API for this command — it's pure rendering. Even if the JWT has expired, the help directory still renders.
 
 ## Determine onboarding state
 
-If `<project-dir>/.hhq-auth.json` doesn't exist, prepend at the top of the output:
+If neither `~/.hhq/machine.json` nor `<project-dir>/.hhq-auth.json` exists, prepend at the top of the output:
 
 > "⚠ You haven't activated yet — say 'set me up' or 'onboard me' to get started."
 
 Don't block the help listing — still show it. The note is just informational.
 
-If the file exists but the user hasn't completed onboarding (you can detect this by NOT calling the backend; just trust the auth file's existence as a proxy for "started" — the help command shouldn't make API calls), no warning needed. The onboard-user skill itself handles half-finished setups.
+If either exists, treat as "started" and skip the warning. The onboard-user skill itself handles half-finished setups.
 
 ## Render the directory
 
@@ -61,7 +61,7 @@ The two skills are also offered inline during onboarding — pick "deep" at the 
 
 ═══ Storage ═══
 
-Your contact data, config, and current batch live on the Helper HQ backend. Your auth file lives in this project folder at `.hhq-auth.json` — keep it; it's how the plugin knows it's you across chats. Your per-prospect freeform notes live alongside it at `contacts/<slug>/notes.md` — open and edit those any time, the plugin reads them when drafting.
+Your contact data, config, and current batch live on the Helper HQ backend. Your machine licence is stored once at `~/.hhq/machine.json` — keep it; it's how the plugin knows it's you across chats and projects. Each project folder also has a small `.hhq-campaign.json` pinning it to a specific campaign. Your per-prospect freeform notes live in the project folder at `contacts/<slug>/notes.md` — open and edit those any time, the plugin reads them when drafting.
 
 ═══ Need a hand? ═══
 
@@ -78,5 +78,5 @@ If you're stuck on what to say, just describe what you want to do in plain langu
 
 ## Edge cases
 
-- **No `.hhq-auth.json`** → render the help block with the activation prompt prepended.
+- **No `~/.hhq/machine.json` and no legacy `.hhq-auth.json`** → render the help block with the activation prompt prepended.
 - **Auth file present but malformed** → render the help block as normal; auth contents don't affect the listing in V1.

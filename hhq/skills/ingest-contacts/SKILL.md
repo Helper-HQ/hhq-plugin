@@ -29,20 +29,24 @@ Do NOT trigger if the user is mid-onboarding (let `onboard-user` route into this
 
 Use the `mcp__ccd_directory__request_directory` tool to get the project folder. Save the returned path as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if that tool isn't available (local Claude Code CLI).
 
-Read `<project-dir>/.hhq-auth.json`. If missing → tell the user "Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes." Stop. Do not parse any CSV.
+Read `~/.hhq/machine.json`.
 
-Parse the auth file to get `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. Continue.
+- **Not found and no legacy file** → "Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes." Stop. Do not parse any CSV.
 
 If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for the API calls below.
 
 If `jwt_expires_at` has passed (or is within 60 seconds of expiry):
 1. Refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>`, empty body.
-2. On 200: parse the new `token` and `expires_at`, write the updated values back to `.hhq-auth.json` (preserve all other fields), use the new token below.
-3. On 401 `invalid_token` (refresh rejected): re-activate. `POST <backend_url>/api/activate` with `{license_key, machine_id}` from the saved auth file. On 200, save the new token + expires_at to `.hhq-auth.json`. On 403 `license_inactive` or `machine_limit_reached`, tell the user and stop. On any other error, tell the user the backend isn't responding and stop.
+2. On 200: parse the new `token` and `expires_at`, write the updated values back to `~/.hhq/machine.json` (preserve all other fields), use the new token below.
+3. On 401 `invalid_token` (refresh rejected): re-activate. `POST <backend_url>/api/activate` with `{license_key, machine_id}` from the saved auth file. On 200, save the new token + expires_at to `~/.hhq/machine.json`. On 403 `license_inactive` or `machine_limit_reached`, tell the user and stop. On any other error, tell the user the backend isn't responding and stop.
 
 All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk` (`-s` silent, `-k` is harmless and covers any unusual cert situations).
 
 Never log the JWT or licence key in chat output.
+
+Note: contacts are **user-level master data** shared across all campaigns — this skill imports into the master pool. Per-campaign state (status, last_surfaced_at, research, messages) is created lazily as surface-next-5 / research-and-draft run within a specific campaign.
 
 ## Locate the file(s)
 
@@ -648,7 +652,7 @@ Do NOT echo full lists. Do NOT show example rows.
 
 - Do NOT write a local `contacts-master.csv` or any contact data to disk. The backend is the master.
 - Do NOT compute slugs, do dedup logic, or merge state client-side. The backend does all of that.
-- Do NOT modify `.hhq-auth.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `~/.hhq/machine.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
 - Do NOT call any other API endpoint or external service.
 - Do NOT delete prospects from the master if they're missing from a fresh export — the backend keeps everything by design (you couldn't delete them even if you tried; the import endpoint is upsert-only).
 - Do NOT attempt to parse `.zip` archives — instruct the user to extract `Connections.csv` (and `messages.csv` if present) first.

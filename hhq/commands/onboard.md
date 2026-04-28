@@ -12,4 +12,4 @@ The user invoked this command because they want to onboard. Don't second-guess t
 
 - Does NOT render help (use `/hhq:help` for that).
 - Does NOT call any backend API directly — `onboard-user` handles all backend interaction.
-- Does NOT read or write `.hhq-auth.json` directly — `onboard-user` handles that.
+- Does NOT read or write `~/.hhq/machine.json` or `.hhq-campaign.json` directly — `onboard-user` handles that.

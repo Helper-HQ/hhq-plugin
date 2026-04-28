@@ -1,6 +1,6 @@
 ---
 name: tune-voice
-description: Manage the user's voice profile after onboarding. Use when the user says "tune my voice", "update my voice", "show my voice", "view my voice", "regenerate my voice", "add this to my voice", or anything similar that references their voice profile. Loads config.voice_profile from /api/me/config, displays it nicely, and offers four actions — (1) View only; (2) Edit do/dont/tone/phrases/summary lists directly; (3) Add a new source (URL, paste text, attach PDF/DOCX) and re-synthesise; (4) Regenerate from scratch using existing sources. Saves changes via PUT /api/me/config. The voice_profile shape and synthesis logic mirror onboard-user Phase 6 — this skill is the ongoing-management twin of that one-time onboarding step.
+description: Manage the user's voice profile after onboarding. Two modes — (a) base voice (default) acts on `voice_profile` at user level via `/api/me/config`; (b) campaign-additions mode acts on `voice_additions` for the current campaign via `/api/me/campaigns/{slug}/config`, additive on top of the base. Triggers — base mode on "tune my voice", "update my voice", "show my voice", "regenerate my voice"; campaign-additions mode on "tune this campaign's voice", "add to campaign voice", "tune voice for this campaign", or any phrase mentioning "this campaign" alongside voice. Both modes display the profile, then offer (1) view only; (2) edit do/dont/tone/phrases/summary directly; (3) add a new source (URL, paste, PDF/DOCX) and re-synthesise; (4) regenerate from scratch. Synthesis logic mirrors onboard-user Phase 6.
 ---
 
 # Tune Voice — Sales Helper Lite
@@ -18,34 +18,62 @@ Trigger when the user says:
 - "add <thing> to my voice" (URL, article, message, file)
 - "remove <thing> from my voice"
 
-Do NOT trigger if `.hhq-auth.json` is missing — route to `onboard-user` first ("No auth file — say 'set me up' to onboard.").
+Do NOT trigger if `~/.hhq/machine.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `onboard-user` first ("No auth — say 'set me up' to onboard.").
 
-## Phase 0 — Auth
+## Phase 0 — Auth, mode, campaign
 
-Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
+### Step 0a — Resolve auth (machine-level)
 
-Read `<project-dir>/.hhq-auth.json`. If missing → tell the user and stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, no legacy file** → tell the user and stop.
 
-If `jwt_expires_at` is past or within 60s of expiry, run the standard refresh / re-activate fallback (see `ingest-contacts` Phase 0 for the exact protocol).
+If `jwt_expires_at` is past or within 60s of expiry, run the standard refresh / re-activate fallback (see `ingest-contacts` Phase 0 for the exact protocol). Save token updates to `~/.hhq/machine.json`.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key in chat.
 
+### Step 0b — Determine mode (user-base vs campaign-additions)
+
+Decide `mode` based on how the skill was triggered:
+
+- Phrases mentioning "this campaign" / "for this campaign" / "campaign voice" / "campaign-specific voice", or explicit `--campaign` argument → `mode = "campaign"`.
+- All other voice phrases ("tune my voice", "update my voice", "show my voice", etc.) → `mode = "user"`.
+
+If ambiguous (e.g. just "tune voice" while the project is pinned to a non-default campaign), ask once:
+
+> "Tune your **base voice** (used everywhere) or this campaign's **voice additions** (layered on top of the base, just for this campaign)? (base / campaign)"
+
+### Step 0c — Resolve current campaign (if mode = "campaign")
+
+Use `mcp__ccd_directory__request_directory` to get the project folder. Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing or empty → tell the user this project isn't pinned to a campaign yet. Suggest `/hhq:new-campaign` or running base-voice tuning instead. Stop.
+
+### Step 0d — Set the target endpoint and field
+
+- **mode = "user"** → endpoint `/api/me/config`, field `voice_profile`.
+- **mode = "campaign"** → endpoint `/api/me/campaigns/<campaign_slug>/config`, field `voice_additions`.
+
+Throughout the rest of the skill, references to "the profile" mean the value at `<endpoint>.<field>`.
+
 ## Phase 1 — Load current voice
 
-`GET <backend_url>/api/me/config`
+`GET <endpoint>` (the endpoint chosen in Step 0d).
 
-Read `voice_profile` from the response.
+Read the relevant field — `voice_profile` (user mode) or `voice_additions` (campaign mode).
 
-**If `voice_profile` is null or missing:**
+**If the field is null or missing:**
 
-> "You don't have a voice profile yet. Want to build one now? I'll ask for a brand guide, articles, or LinkedIn message URLs — same as the voice step in onboarding. (yes / no)"
+User mode:
+> "You don't have a base voice profile yet. Want to build one now? I'll ask for a brand guide, articles, or LinkedIn message URLs — same as the voice step in onboarding. (yes / no)"
 
-If yes → jump to Phase 3 ("Add sources and synthesise") with no existing profile to merge into.
+Campaign mode:
+> "This campaign doesn't have any voice additions yet. Most campaigns don't need any — your base voice is fine on its own. Want to add some? Examples: 'lean more formal', 'mention investor track record', 'never start with a first name', specific phrases worth echoing. (yes / no)"
+
+If yes → jump to Phase 3 ("Add sources and synthesise") with no existing profile to merge into. In campaign mode, the user can also just paste a few notes and skip source-fetching entirely.
 If no → stop politely.
 
-**If `voice_profile` exists:**
+**If the field exists:**
 
 Display it using the format below (Phase 2). Then go to Phase 2.
 
@@ -166,29 +194,33 @@ When user says **done** → Save.
 
 ## Save
 
-`PUT <backend_url>/api/me/config` with the existing config + updated `voice_profile`.
+`PUT <endpoint>` (chosen in Step 0d) with the existing config + the updated field (`voice_profile` for user mode, `voice_additions` for campaign mode).
 
-Do NOT touch any other config fields. Read the existing config first, splice in the new `voice_profile`, PUT the whole config.
+Do NOT touch any other config fields. Read the existing config first, splice in the new value for the target field, PUT the whole config.
 
 ```
-PUT <backend_url>/api/me/config
+PUT <endpoint>
 Authorization: Bearer <jwt>
 Content-Type: application/json
 
-{ "config": <existing config with voice_profile replaced> }
+{ "config": <existing config with the target field replaced> }
 ```
 
 Expected HTTP 200. On 401, run auth fallback once and retry. On 5xx / network error, tell the user honestly and don't lose their edits — keep them in conversation context for retry.
+
+In campaign mode, only the campaign's voice_additions are updated — the user's base voice on `/api/me/config` is untouched.
 
 ## Close
 
 > "Saved. Your voice is updated and the next opener I draft will use it. Say 'tune my voice' anytime you want to come back to this."
 
+(In campaign mode, the close line should be: *"Saved. The next opener I draft for this campaign will layer these additions on top of your base voice. Other campaigns are unaffected."*)
+
 ## Things you must NOT do
 
 - Do NOT save raw source content (page text, PDF/DOCX content, message bodies) anywhere. Distil and forget — same rule as onboard-user Phase 6.
 - Do NOT save uploaded files to disk or backend. PDFs/DOCXs are read inline; the file itself is not persisted.
-- Do NOT touch other config fields. This skill only writes `voice_profile`.
+- Do NOT touch other config fields. This skill only writes `voice_profile` (user mode) or `voice_additions` (campaign mode) — never both, never anything else.
 - Do NOT regenerate without confirming — manual edits are user work and shouldn't be silently overwritten.
 - Do NOT log the JWT or licence key in chat.
 - Do NOT loop forever in edit mode. After 5 rounds, nudge to save.

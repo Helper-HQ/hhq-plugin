@@ -21,25 +21,35 @@ Trigger when the user says:
 
 Or when invoked inline from `onboard-user` Phase 4 ("deep" branch).
 
-Do NOT trigger if `.hhq-auth.json` is missing — route to `onboard-user` first ("No auth file — say 'set me up' to onboard.").
+Do NOT trigger if `~/.hhq/machine.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `onboard-user` first ("No auth — say 'set me up' to onboard.").
 
-## Phase 0 — Auth
+## Phase 0 — Auth and campaign
 
-Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
+### Step 0a — Resolve auth (machine-level)
 
-Read `<project-dir>/.hhq-auth.json`. If missing → tell the user and stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, no legacy file** → tell the user and stop.
 
-If `jwt_expires_at` is past or within 60s of expiry, run the standard refresh / re-activate fallback (see `ingest-contacts` Phase 0 for the exact protocol).
+If `jwt_expires_at` is past or within 60s of expiry, run the standard refresh / re-activate fallback (see `ingest-contacts` Phase 0 for the exact protocol). Save token updates to `~/.hhq/machine.json`.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key in chat.
 
-## Phase 1 — Load current config
+### Step 0b — Resolve current campaign (project-level)
 
-`GET <backend_url>/api/me/config`
+Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
 
-Hold the full config in skill memory — you'll need it intact for the final PUT (we do GET → merge → PUT so we never overwrite fields owned by other skills).
+Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
+
+ICP is per-campaign in v0.10+. This skill operates on `campaign_slug`'s ICP, not user-level.
+
+## Phase 1 — Load current campaign config
+
+`GET <backend_url>/api/me/campaigns/<campaign_slug>/config`
+
+Hold the full campaign config in skill memory — you'll need it intact for the final PUT (we do GET → merge → PUT so we never overwrite fields owned by other skills).
 
 Read `icp` and `icp_profile` from the response.
 
@@ -279,14 +289,14 @@ Loop:
 
 ## Phase 6 — Save
 
-GET the current config fresh (in case anything else changed during the conversation), splice in the new `icp` and `icp_profile`, PUT.
+GET the current campaign config fresh (in case anything else changed during the conversation), splice in the new `icp` and `icp_profile`, PUT to the same campaign endpoint.
 
 ```
-PUT <backend_url>/api/me/config
+PUT <backend_url>/api/me/campaigns/<campaign_slug>/config
 Authorization: Bearer <jwt>
 Content-Type: application/json
 
-{ "config": <existing config with icp + icp_profile replaced> }
+{ "config": <existing campaign config with icp + icp_profile replaced> }
 ```
 
 Expected HTTP 200. On 401, run auth fallback once and retry. On 5xx / network error, tell the user honestly and don't lose their answers — keep them in conversation context for retry.

@@ -30,9 +30,13 @@ Also trigger inline if `ingest-contacts` reports `review_count > 0` AND the user
 
 Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
 
-Read `<project-dir>/.hhq-auth.json`. If missing → "No auth file — say 'set me up' to onboard." Stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`. Refresh / re-activate if expired (same flow as other skills). Use `Authorization: Bearer <jwt>` and `curl -sk` for all calls. Never log the JWT or licence key.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
+
+Refresh / re-activate if expired (same flow as other skills; save updates to `~/.hhq/machine.json`). Use `Authorization: Bearer <jwt>` and `curl -sk` for all calls. Never log the JWT or licence key.
 
 ## Phase 1 — Fetch pending items
 
@@ -185,7 +189,7 @@ After the loop completes (or the user stopped), give a brief tally:
 
 - Do NOT batch-resolve items. One at a time, with the user's confirmation per item. The point of the queue is the user's judgment — automating it would defeat the purpose.
 - Do NOT show or echo internal IDs (queue id, contact id) in the prose UI. Show slugs / names only.
-- Do NOT modify `.hhq-auth.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
 - Do NOT show internal scoring math beyond the single `match_score` percentage and `match_reason` text the backend sends.
 - Do NOT log the JWT or licence key.
 - Do NOT pre-fetch all items and PATCH them eagerly — fetch the list once at the top, walk through it sequentially. If a 422-already-resolved or 404-not-found pops up, the user is reviewing in another session; just skip it.

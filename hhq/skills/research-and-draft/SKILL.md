@@ -1,6 +1,6 @@
 ---
 name: research-and-draft
-description: Researches each prospect in the current batch and drafts a Greg-style opener for each. Two entry points — (1) normal flow after surface-next-5 ("let's go", "draft them", etc.) reads /api/me/current-batch, (2) quick-start flow after onboard-user ("let's go on quick start", "research my 5") reads config.quick_start.urls and creates contacts on the fly via POST /api/me/contacts/import after profile reads. Both paths use the Chrome connector to read each prospect's LinkedIn profile + recent posts, save findings to the prospect's `research` field via PUT /api/me/contacts/{slug}, draft a short signal-referenced opener, append to the `messages` field, set status to `drafted`, then present all openers cleanly in chat. Run AFTER surface-next-5 (normal) or AFTER onboard-user with quick-start URLs queued.
+description: Researches each prospect in the current batch and drafts a Greg-style opener for each — campaign-scoped. Resolves the active campaign from `<project-dir>/.hhq-campaign.json` (default `default`). Two entry points — (1) normal flow after surface-next-5 ("let's go", "draft them", etc.) reads `/api/me/campaigns/{slug}/current-batch`, (2) quick-start flow after onboard-user ("let's go on quick start", "research my 5") reads `config.quick_start.urls` from the user-level config and operates inside the `default` campaign (quick-start always runs in the default campaign in V1). Both paths use the Chrome connector to read each prospect's LinkedIn profile + recent posts, save per-campaign findings to `research` via PUT /api/me/campaigns/{slug}/contacts/{contactSlug}, draft a short signal-referenced opener using the user's base voice merged with any campaign voice_additions, append to per-campaign `messages`, set per-campaign status to `drafted`, then present all openers cleanly. Run AFTER surface-next-5 (normal) or AFTER onboard-user with quick-start URLs queued.
 ---
 
 # Research and Draft — Sales Helper Lite
@@ -24,7 +24,7 @@ Trigger when the user says any variant of:
 - "yes draft"
 - "give me the openers"
 
-…AND `/api/me/current-batch` returns a non-empty batch.
+…AND `/api/me/campaigns/{slug}/current-batch` returns a non-empty batch.
 
 ### Quick-start flow triggers
 
@@ -43,32 +43,47 @@ If a phrase like "let's go" is ambiguous (current_batch non-empty AND quick_star
 
 If the user says one of the normal-flow phrases but the current batch is empty AND quick_start is unavailable, route them to surface-next-5 first ("There's no current batch — let's surface 5 prospects first. Say 'get me the next 5'.").
 
-## Phase 0 — Auth
+## Phase 0 — Auth and campaign
 
-Use `mcp__ccd_directory__request_directory` to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
+### Step 0a — Resolve auth (machine-level)
 
-Read `<project-dir>/.hhq-auth.json`. If missing → "No auth file — say 'set me up' to onboard." Stop.
+Read `~/.hhq/machine.json`.
 
-Parse `backend_url`, `jwt`, `jwt_expires_at`, `license_key`, `machine_id`.
+- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-auth.json`.
-2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
+1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save new token + expires_at to `~/.hhq/machine.json`.
+2. On 401, re-activate via `POST /api/activate` with `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
+
+### Step 0b — Resolve current campaign (project-level)
+
+Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
+
+Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
+
+This skill operates inside that campaign — its current-batch, per-prospect status, research, and messages all scope to it. Quick-start (Phase Q) always runs inside `default` regardless of pin (quick-start is a one-time onboarding artifact at user level).
 
 ## Phase Q — Quick-start branch (alternative entry point)
 
 If the user invoked this skill via a quick-start trigger phrase (see "When this skill runs"), run **Phase Q instead of the normal Pre-flight + Phase 1 loop**. Phase Q uses the same research methodology (Phase 2) and drafting methodology (Phase 3) as the normal flow — the difference is the input (URLs, no contacts yet) and what we do at the end (create contacts after research, since they don't exist yet).
 
-### Step Q1 — Read the queued URLs
+### Step Q1 — Read user config and default-campaign config
 
-`GET <backend_url>/api/me/config`
-
+User-level: `GET <backend_url>/api/me/config`.
 - Read `quick_start.urls` (array of LinkedIn profile URLs).
-- Read `quick_start.status`. If `"completed"` → tell the user "You've already completed quick start — say 'get me the next 5' to surface from your full contact list." Stop.
-- Read `offer`, `offer_hook`, `offer_profile`, `icp`, `voice_profile`, `signals.weighted` — same fields the normal flow uses for drafting.
-- If `quick_start.urls` is empty/null → tell the user "No quick-start URLs queued. Want to onboard or surface a normal batch?" Stop.
+- Read `quick_start.status`. If `"completed"` → "You've already completed quick start — say 'get me the next 5' to surface from your full contact list." Stop.
+- Read `voice_profile` — the user's base voice for drafting.
+- If `quick_start.urls` is empty/null → "No quick-start URLs queued. Want to onboard or surface a normal batch?" Stop.
+
+Default-campaign: `GET <backend_url>/api/me/campaigns/default/config`.
+- Read `offer`, `offer_hook`, `offer_profile`, `icp`, `signals.weighted`.
+- Read `voice_additions` if present — layer additively on top of the user's base voice when drafting.
+
+Quick-start always operates in the `default` campaign in V1 (quick-start lives at user level, was captured during initial onboarding, and the default campaign is the user's first/primary campaign). For other campaigns, the user surfaces normally via surface-next-5.
 
 ### Step Q2 — Tell the user what's happening
 
@@ -117,10 +132,12 @@ Authorization: Bearer <jwt>
 
 The endpoint upserts by `linkedin_url`, so if the prospect later appears in the bulk LinkedIn export, the existing record will be updated rather than duplicated. The response includes the contact's slug — use it for the next step.
 
-**Q3f — Save research and message.**
+**Q3f — Save per-campaign research and message.**
+
+Quick-start writes to the `default` campaign. Per-campaign status, research, and messages live on `campaign_contacts`:
 
 ```
-PUT <backend_url>/api/me/contacts/{slug}
+PUT <backend_url>/api/me/campaigns/default/contacts/{contactSlug}
 {
   "research": { ...the structured research from Q3c... },
   "messages": [
@@ -216,28 +233,36 @@ If the prompt fetch fails (404, network, backend down):
 
 ## Pre-flight checks
 
-### Step A — Fetch the batch
+### Step A — Fetch the campaign batch
 
-`GET <backend_url>/api/me/current-batch`
+`GET <backend_url>/api/me/campaigns/<campaign_slug>/current-batch`
 
 - HTTP 200 with non-empty `batch` → continue.
-- HTTP 200 with empty `batch` → tell the user "No active batch — say 'get me the next 5' first." Stop.
+- HTTP 200 with empty `batch` → "No active batch in `<campaign_slug>` — say 'get me the next 5' first." Stop.
+- HTTP 404 `campaign_not_found` → "This project is pinned to campaign `<campaign_slug>` but the backend doesn't have it. Either fix `.hhq-campaign.json` or run `/hhq:new-campaign`." Stop.
 - HTTP 401 → run the auth fallback once and retry.
 
 Hold the batch in memory: it's a list of `{contact_id, surfaced_at, drafted_at, reasoning}`.
 
-### Step B — Fetch the user's config
+### Step B — Fetch user voice + campaign config
 
-`GET <backend_url>/api/me/config` — read `offer`, `offer_hook`, `offer_profile`, `icp`, `voice_profile`, and `signals.weighted`. The drafting heuristics in Phase 3 below use all of these:
-- `offer` + `offer_hook` + `offer_profile.canonical_phrases` shape the offer language and angle.
-- `voice_profile.summary` + `do` + `dont` + `phrases` shape the user's voice — match their tone and follow the rules.
-- `icp` + `signals.weighted` shape what counts as a relevant signal.
+User-level: `GET <backend_url>/api/me/config` — read `voice_profile` (the user's base voice).
 
-If config is missing or incomplete (no `offer` at minimum), route to onboard-user. Missing `voice_profile` or `offer_profile` is fine — fall back to a more generic style and note it in the result block honestly ("voice not yet tuned — generic phrasing").
+Campaign-level: `GET <backend_url>/api/me/campaigns/<campaign_slug>/config` — read `offer`, `offer_hook`, `offer_profile`, `icp`, `signals.weighted`, `voice_additions`.
+
+The drafting heuristics in Phase 3 below use all of these:
+- `offer` + `offer_hook` + `offer_profile.canonical_phrases` (campaign) shape the offer language and angle.
+- `voice_profile.summary` + `do` + `dont` + `phrases` + `tone` (user-level base) shape voice.
+- `voice_additions.summary` + `do` + `dont` + `phrases` + `tone` + `notes` (campaign-level) layer **additively** on top of the base. Concatenate the arrays, append the additions summary/notes — never replace.
+- `icp` + `signals.weighted` (campaign) shape what counts as a relevant signal.
+
+If campaign config is missing or incomplete (no `offer` at minimum), route to `/hhq:new-campaign` (or `offer-review` if the campaign already exists but is empty). Missing base `voice_profile` or `offer_profile` is fine — fall back to a more generic style and note it honestly ("voice not yet tuned — generic phrasing").
 
 ### Step C — Map contact_ids to slugs
 
-`GET <backend_url>/api/me/contacts?per_page=500` (paginate if total > 500). Build a map `{id → {slug, first_name, last_name, company, position, linkedin_url}}` for the prospects in the batch. You'll use the slug for per-prospect detail GET/PUT.
+For each `contact_id` in the batch, `GET <backend_url>/api/me/campaigns/<campaign_slug>/contacts/<that contact's slug>` to get both the contact identity and the campaign-scoped fields (current research, messages, status).
+
+If you don't have the slug yet, do a single bulk fetch first: `GET <backend_url>/api/me/contacts?per_page=500` (paginate if total > 500) to map `id → slug`. Then per-prospect detail GETs use the campaign endpoint.
 
 ### Tell the user what's about to happen
 
@@ -259,9 +284,34 @@ If a single prospect's research fails (page gone, rate-limit, network error), DO
 
 For the current prospect:
 
-### Step 2a — Fetch full contact record
+### Step 2a — Fetch full contact record (campaign-scoped)
 
-`GET <backend_url>/api/me/contacts/{slug}` to get the latest fields including `linkedin_url`, `email`, `headline`, etc.
+`GET <backend_url>/api/me/campaigns/<campaign_slug>/contacts/{contactSlug}` to get the latest contact fields (linkedin_url, email, headline, etc.) PLUS the per-campaign state (current research, messages, status) in a single call.
+
+The response shape:
+
+```json
+{
+  "contact": {
+    "id": ...,
+    "slug": ...,
+    "first_name": ...,
+    "linkedin_url": ...,
+    "email": ...,
+    "headline": ...,
+    ...
+    "campaign": {
+      "status": "surfaced",
+      "last_surfaced_at": "...",
+      "research": {...},
+      "messages": [...]
+    },
+    "cooldown_warnings": [...]
+  }
+}
+```
+
+The `campaign.research` and `campaign.messages` are what you'll be appending to in this campaign.
 
 ### Step 2b — Read local notes if any
 
@@ -347,16 +397,18 @@ If you couldn't get a profile read at all, set:
 }
 ```
 
-PUT the research field for this prospect:
+PUT the per-campaign research:
 
 ```
-PUT <backend_url>/api/me/contacts/{slug}
+PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/{contactSlug}
 {
   "research": <the JSON above>
 }
 ```
 
-If `research` already has prior data (re-surfaced after the 30-day cooldown), the PUT overwrites. If you want to preserve history, prepend a `previous_runs` array — but for V1 simplicity just overwrite.
+This writes to `campaign_contacts.research` for THIS campaign only. Other campaigns retain their own research for the same person — different angle, different fit assessment, different hook.
+
+If `research` already has prior data in this campaign (re-surfaced after the 30-day cooldown), the PUT overwrites. If you want to preserve history, prepend a `previous_runs` array — but for V1 simplicity just overwrite.
 
 ### Step 2f — Create notes placeholder (only if absent)
 
@@ -432,9 +484,9 @@ Use the stored contact fields (position, company, headline). Be honest in the dr
 
 > Hey Tim — noticed we connected a while back. We work with propulsion teams on flight-readiness testing — if it's relevant for your work at Gilmour, happy to share more. Otherwise no pressure.
 
-### Append the opener to messages
+### Append the opener to messages (campaign-scoped)
 
-GET the current `messages` array on the contact (you already pulled the full contact in Step 2a; reuse that).
+GET the current `campaign.messages` array on the contact (you already pulled the campaign-scoped detail in Step 2a; reuse that).
 
 Append a new entry:
 
@@ -449,42 +501,42 @@ Append a new entry:
 }
 ```
 
-PUT the updated messages array:
+PUT the updated messages array to the per-campaign endpoint:
 
 ```
-PUT <backend_url>/api/me/contacts/{slug}
+PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/{contactSlug}
 {
   "messages": <the appended array>
 }
 ```
 
-Preserve all prior message entries — append, don't replace.
+This writes to `campaign_contacts.messages` for THIS campaign. Preserve all prior message entries — append, don't replace.
 
-## Phase 4 — Update status after each prospect
+## Phase 4 — Update per-campaign status after each prospect
 
 For the prospect just drafted:
 
 ```
-PUT <backend_url>/api/me/contacts/{slug}
+PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/{contactSlug}
 {
   "status": "drafted"
 }
 ```
 
-Don't touch `last_surfaced_at` — surface-next-5 already set it. Don't mark `contacted` — V1 has no automated send-tracking.
+This sets the per-campaign `campaign_contacts.status` to `drafted`. Other campaigns are not affected. Don't touch `last_surfaced_at` — surface-next-5 already set it. Don't mark `contacted` — V1 has no automated send-tracking. The user marks `contacted` themselves via the dashboard or backend update; that bumps `contacts.last_contacted_at` (global, drives the 7-day hard lockout) so the prospect can't be surfaced in any campaign for a week.
 
 ## Phase 5 — After all prospects done — clear the batch and present
 
 Once the loop completes:
 
-### Step 5a — Clear the batch
+### Step 5a — Clear the batch (campaign-scoped)
 
 ```
-PUT <backend_url>/api/me/current-batch
+PUT <backend_url>/api/me/campaigns/<campaign_slug>/current-batch
 { "batch": [] }
 ```
 
-This way the next `surface-next-5` call doesn't see a stale batch.
+This way the next `surface-next-5` call in this campaign doesn't see a stale batch. Other campaigns' batches are unaffected.
 
 ### Step 5b — Present all openers in chat
 
@@ -545,7 +597,7 @@ The pipeline URL is intentionally low-key — one line, no preamble. Per the v0.
 - Do NOT use exclamation marks in opener drafts (unless mirroring the user's voice in a future tier).
 - Do NOT pitch in the opener. Soft ask only.
 - Do NOT call the `/api/mcp/*` endpoints in V1 — leave them as documented seams. V1 does research + drafting in-context.
-- Do NOT modify `.hhq-auth.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
 - Do NOT log the JWT, licence key, or auth file contents.
 - Do NOT touch the user's config.
 
@@ -558,6 +610,6 @@ The pipeline URL is intentionally low-key — one line, no preamble. Per the v0.
 - **Rate-limited mid-batch** → mark remaining prospects as research-failed, fall back, finish the batch. Don't retry mid-flight (it'll just re-rate-limit).
 - **Single-name profile** (no last name) → use what's available. Slug already handled by ingest-contacts (which delegates to backend).
 - **Two prospects in batch with the same name** (unlikely) → slugs differ (server-side disambiguation), so notes files don't collide.
-- **`/api/me/current-batch` is empty mid-flow** → another session may have cleared it. Tell the user honestly and suggest re-surfacing.
+- **`/api/me/campaigns/{slug}/current-batch` is empty mid-flow** → another session may have cleared it. Tell the user honestly and suggest re-surfacing in this campaign.
 - **User interrupts mid-batch** ("stop", "pause", "wait") → finish the current prospect cleanly (don't leave a half-PUT contact), then stop. The current-batch on the backend still reflects the original 5 with `drafted_at` set on the ones you finished. The user can re-trigger this skill — check each contact's `messages` field for a recent opener entry to skip already-done prospects.
 - **Backend down mid-batch** → if Chrome research succeeded but the PUT fails, you have research data you can't persist. Hold it in conversation context, surface a partial result honestly, suggest retry.
