@@ -27,7 +27,9 @@ Use `mcp__ccd_directory__request_directory` to get the persistent project folder
 
 ### Step 0b — Check for machine auth
 
-Read `~/.hhq/machine.json`.
+**Per-machine folder access.** First, call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request Cowork access to the per-machine auth folder. The user sees a one-time prompt per Cowork project; approve once and `~/.hhq/` is readable for the rest of the project's history. If declined, set `home_hhq_unavailable = true` and the skill falls back to reading per-project `<project-dir>/.hhq-auth.json` instead. If the tool is unavailable (CLI), treat as approved — CLI doesn't sandbox `~/.hhq/`.
+
+Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`. Continue.
 - **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy auth file. Migrate inline:

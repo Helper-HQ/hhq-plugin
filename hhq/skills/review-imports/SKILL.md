@@ -30,10 +30,12 @@ Also trigger inline if `ingest-contacts` reports `review_count > 0` AND the user
 
 Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
 
-Read `~/.hhq/machine.json`.
+**Per-machine folder access.** First, call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request Cowork access to the per-machine auth folder. The user sees a one-time prompt per Cowork project; approve once and `~/.hhq/` is readable for the rest of the project's history. If declined, set `home_hhq_unavailable = true` and fall back to reading per-project `<project-dir>/.hhq-auth.json` instead. If the tool is unavailable (CLI), treat as approved.
+
+Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. (Skip migration if `home_hhq_unavailable`.) Continue.
 - **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
 
 Refresh / re-activate if expired (same flow as other skills; save updates to `~/.hhq/machine.json`). Use `Authorization: Bearer <jwt>` and `curl -sk` for all calls. Never log the JWT or licence key.

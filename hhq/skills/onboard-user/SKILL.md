@@ -35,15 +35,31 @@ Auth is stored at the **machine level** in `~/.hhq/machine.json` (so opening a n
 
 ### Step 0a — Get the project folder
 
-Use the `mcp__ccd_directory__request_directory` tool to get a path to the persistent project folder. The user will accept a permission prompt the first time.
+Use the `mcp__ccd_directory__request_directory` tool with no `path` argument to get the persistent project folder. The user will accept a permission prompt the first time.
 
 Save the returned path as `<project-dir>` for the rest of this skill. The campaign-pin file lives there.
 
 If the tool isn't available (local Claude Code CLI), fall back to `~/.hhq/sales-helper/` and create it if missing.
 
+### Step 0a.5 — Request access to `~/.hhq/` (per-machine auth folder)
+
+Call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request access to the per-machine auth folder.
+
+The user sees a permission prompt the first time in any Cowork project: *"Helper HQ wants access to ~/.hhq"*. Approving gives the plugin read/write access to that folder for the rest of this project's history. The grant is per-Cowork-project; subsequent skill invocations in the same project don't re-prompt.
+
+This folder holds `machine.json` — the per-machine licence + cached JWT. Sharing it across all your Cowork projects on the same laptop is what lets a single licence cover multiple campaigns without burning a machine slot per project.
+
+Three outcomes:
+
+- **Approved** → continue to Step 0b. Reads and writes to `~/.hhq/` work for the rest of the session.
+- **Declined** → set a `home_hhq_unavailable` flag in your skill memory and continue to Step 0b. The skill falls back to per-project auth at `<project-dir>/.hhq-auth.json`. Tell the user once: "OK, I'll use a per-project auth file instead. Each Cowork project will need its own licence activation, which uses one of your machine slots."
+- **Tool unavailable** (e.g. local Claude Code CLI where the tool may not be present, or the tool returns an error suggesting it's unsupported) → treat as "approved" since CLI doesn't sandbox `~/.hhq/`. Continue to Step 0b.
+
 ### Step 0b — Check for existing machine auth
 
-Read `~/.hhq/machine.json`.
+If `home_hhq_unavailable` is set, skip directly to checking `<project-dir>/.hhq-auth.json` (the per-project fallback) below.
+
+Otherwise, read `~/.hhq/machine.json`.
 
 - **Found and you are NOT explicitly re-onboarding** → tell the user: "Your machine is already activated. To create a new outbound campaign in this project, run `/hhq:new-campaign`. To redo your full setup (overwrite voice + default-campaign offer/ICP/signals), say 'redo onboarding' or 'start over'. (new campaign / redo onboarding / cancel)". Route accordingly. If "new campaign" → stop and tell them to run `/hhq:new-campaign`. If "redo onboarding" → continue, reuse machine_id and licence_key from the existing file. If "cancel" → stop.
 - **Found and user IS re-onboarding** → continue, reuse machine_id and licence_key.
@@ -94,6 +110,8 @@ Handle the response:
 
 ### Step 0e — Save the auth and campaign files
 
+**If `home_hhq_unavailable` is NOT set** (canonical path — user approved access to `~/.hhq/`):
+
 Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`). Write `~/.hhq/machine.json`:
 
 ```json
@@ -108,11 +126,13 @@ Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`). Write `~/.hhq/machine.json`:
 }
 ```
 
-The first time this writes, Claude Code will ask for permission to write outside the working directory. Approve once — subsequent writes are silent.
-
 Update `tier` and `helpers` in this file every refresh/re-activation in case they changed.
 
-Also write `<project-dir>/.hhq-campaign.json`:
+**If `home_hhq_unavailable` IS set** (user declined `~/.hhq/` access in Step 0a.5):
+
+Write the auth payload to `<project-dir>/.hhq-auth.json` instead, with the exact same shape (`backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`). This is the per-project fallback. Each new Cowork project run will need its own activation under this path, consuming one machine slot per project.
+
+Either way, also write `<project-dir>/.hhq-campaign.json`:
 
 ```json
 {

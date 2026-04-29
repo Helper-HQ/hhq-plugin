@@ -29,10 +29,12 @@ Do NOT trigger if the user is mid-onboarding (let `onboard-user` route into this
 
 Use the `mcp__ccd_directory__request_directory` tool to get the project folder. Save the returned path as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if that tool isn't available (local Claude Code CLI).
 
-Read `~/.hhq/machine.json`.
+**Per-machine folder access.** First, call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request Cowork access to the per-machine auth folder. The user sees a one-time prompt per Cowork project; approve once and `~/.hhq/` is readable for the rest of the project's history. If declined, set `home_hhq_unavailable = true` and fall back to reading per-project `<project-dir>/.hhq-auth.json` instead. If the tool is unavailable (CLI), treat as approved.
+
+Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. Continue.
+- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. (Skip migration if `home_hhq_unavailable` — the project file is the canonical location for this session.) Continue.
 - **Not found and no legacy file** → "Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes." Stop. Do not parse any CSV.
 
 If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for the API calls below.
