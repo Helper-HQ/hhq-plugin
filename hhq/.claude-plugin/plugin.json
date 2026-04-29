@@ -1,7 +1,7 @@
 {
   "name": "hhq",
   "description": "Helper HQ — a family of AI-assisted helpers for solo founders, coaches, and consultants. V1 ships Sales Helper (prospect ranking + opener drafting from your LinkedIn network) plus Marketing Helper (deep ICP discovery and offer review walkthroughs). Open a chat, ask for the next 5 prospects, and get short tailored opening messages drafted from real signals — LinkedIn posts, recent activity, role changes. Human-in-the-loop by design — the plugin prepares, you review and send. V1 dogfood ships with all helpers active for every activated user.",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "author": {
     "name": "Brad Younger",
     "email": "brad@helperhq.co"
