@@ -29,7 +29,7 @@ Use `mcp__ccd_directory__request_directory` to get the persistent project folder
 
 Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
-- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`. Continue.
+- **Found** → parse `backend_url`, `license_key`, `session_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`. Continue.
 - **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
 - **Neither found** → user has not connected this project. Tell them: "This project isn't connected yet. Run `/hhq:connect` first to link it to your account, then come back here to add a new campaign — or run `/hhq:onboard` if you're brand-new to Helper HQ." Stop.
 

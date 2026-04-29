@@ -76,7 +76,7 @@ If you're stuck on what to say, just describe what you want to do in plain langu
 - Does NOT call any backend API.
 - Does NOT trigger any other skill — it's pure rendering.
 - Does NOT speculate about future helpers or skills not listed above.
-- Does NOT show internal auth values (jwt, license_key, machine_id, raw signal weights).
+- Does NOT show internal auth values (jwt, license_key, session_id, raw signal weights).
 
 ## Edge cases
 

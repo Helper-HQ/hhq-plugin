@@ -45,8 +45,8 @@ If the tool isn't registered (rare CLI case), fall back to `~/.hhq/sales-helper/
 
 Read `<project-dir>/.hhq-session.json`.
 
-- **Found and the user is NOT explicitly re-onboarding** → this project's already activated. Tell them: "This project's already connected. Want to (a) create a new campaign here (run `/hhq:new-campaign`), (b) redo your full onboarding from scratch (overwrites voice + default campaign config), or (c) cancel?". Route accordingly. If "new campaign" → stop, tell them to run `/hhq:new-campaign`. If "redo" → continue, reuse `machine_id` + `license_key` from the existing file. If "cancel" → stop.
-- **Found and user IS re-onboarding** → continue, reuse the existing `machine_id` + `license_key`.
+- **Found and the user is NOT explicitly re-onboarding** → this project's already activated. Tell them: "This project's already connected. Want to (a) create a new campaign here (run `/hhq:new-campaign`), (b) redo your full onboarding from scratch (overwrites voice + default campaign config), or (c) cancel?". Route accordingly. If "new campaign" → stop, tell them to run `/hhq:new-campaign`. If "redo" → continue, reuse `session_id` + `license_key` from the existing file. If "cancel" → stop.
+- **Found and user IS re-onboarding** → continue, reuse the existing `session_id` + `license_key`.
 - **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate inline by renaming the file to `.hhq-session.json`. Then proceed as "Found and not re-onboarding" above.
 - **Neither file found** → genuine first-time setup in this project. Continue to Step 0c.
 
@@ -64,9 +64,9 @@ Validate licence: starts with `hhq_` or `HHQ-`, length ≥ 16 chars. Project lab
 
 ### Step 0d — Activate
 
-For a fresh project: generate a UUIDv4 as the session UUID (sent as `machine_id` to the backend). Windows: `powershell -NoProfile -c '[guid]::NewGuid().ToString()'`. Mac/Linux: `uuidgen`. Strip whitespace.
+For a fresh project: generate a UUIDv4 as the session UUID (sent as `session_id` to the backend). Windows: `powershell -NoProfile -c '[guid]::NewGuid().ToString()'`. Mac/Linux: `uuidgen`. Strip whitespace.
 
-For re-onboarding: reuse the existing `machine_id` from `.hhq-session.json`.
+For re-onboarding: reuse the existing `session_id` from `.hhq-session.json`.
 
 POST to the backend:
 
@@ -76,7 +76,7 @@ Content-Type: application/json
 
 {
   "license_key": "<the licence key>",
-  "machine_id": "<the UUID>",
+  "session_id": "<the UUID>",
   "project_label": "<the label or omit>"
 }
 ```
@@ -99,7 +99,7 @@ Write `<project-dir>/.hhq-session.json`:
 {
   "backend_url": "https://hhq.ngrok.dev",
   "license_key": "<the licence key>",
-  "machine_id": "<the UUID>",
+  "session_id": "<the UUID>",
   "jwt": "<the token returned by /api/activate>",
   "jwt_expires_at": "<the expires_at returned>",
   "tier": "<lite|pro|elite>",

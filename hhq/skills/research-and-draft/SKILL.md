@@ -55,7 +55,7 @@ If the tool isn't registered (rare CLI case), fall back to `~/.hhq/sales-helper/
 
 Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
-- **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
+- **Found** → parse `backend_url`, `license_key`, `session_id`, `jwt`, `jwt_expires_at`. Continue.
 - **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
 - **Neither found** → "No auth — say `/hhq:connect` to link this project (or `/hhq:onboard` if you're brand-new)." Stop.
 

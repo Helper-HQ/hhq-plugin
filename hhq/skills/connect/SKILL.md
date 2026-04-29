@@ -56,7 +56,7 @@ Validate licence: starts with `hhq_` or `HHQ-`, length ≥ 16. Project label is 
 
 ## Phase 3 — Activate
 
-Generate a UUIDv4 as the session UUID (sent as `machine_id` to the backend — column-level rename to `session_id` is deferred). On Windows: `powershell -NoProfile -c '[guid]::NewGuid().ToString()'`. On Mac/Linux: `uuidgen`. Strip whitespace.
+Generate a UUIDv4 as the session UUID (sent as `session_id` to the backend). On Windows: `powershell -NoProfile -c '[guid]::NewGuid().ToString()'`. On Mac/Linux: `uuidgen`. Strip whitespace.
 
 POST to backend:
 
@@ -66,7 +66,7 @@ Content-Type: application/json
 
 {
   "license_key": "<the licence key>",
-  "machine_id": "<the UUID>",
+  "session_id": "<the UUID>",
   "project_label": "<the label or omit>"
 }
 ```
@@ -89,7 +89,7 @@ Write `<project-dir>/.hhq-session.json`:
 {
   "backend_url": "https://hhq.ngrok.dev",
   "license_key": "<the licence key>",
-  "machine_id": "<the UUID>",
+  "session_id": "<the UUID>",
   "jwt": "<token>",
   "jwt_expires_at": "<expires_at>",
   "tier": "<lite|pro|elite>",
