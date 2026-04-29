@@ -62,7 +62,7 @@ Edit, commit, push, then `/plugin marketplace update helper-hq`. Or for tighter 
 
 - **Single `hhq` plugin.** All helpers (sales, future marketing, future ops) and all tiers (lite/pro/elite) live inside, gated by a signed token.
 - **Hybrid skill model.** Low-IP, slow-changing skills (CSV parsing, status updates, onboarding) ship as full-local skill markdown. High-IP or fast-iterating skills (prospect ranking, research analysis, opener drafting, ICP/offer synthesis) are *remote skills* — the prompt is fetched at runtime from the backend `/api/mcp/prompts/{name}`, admin-tunable without a plugin release. The methodology lives behind the API, not on the user's disk.
-- **Auth check** at the top of every skill. Reads `~/.hhq/machine.json` (per-machine, shared across projects) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin) and runs a refresh-or-reactivate fallback before any backend call.
+- **Auth check** at the top of every skill. Reads `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin) and refreshes the JWT if expiring before any backend call. Each Cowork project takes one of 5 default session slots per licence.
 - **Backend API.** All durable state (config, contacts, current batch, per-prospect research, prompt templates) lives on the Helper HQ backend. V1 dogfood: a stable ngrok subdomain (`https://hhq.ngrok.dev`) pointing at the admin's local Herd. Production swaps in a stable Helper HQ domain.
 
 ## Skills (V1, Sales Helper)
@@ -95,7 +95,7 @@ Almost everything lives on the Helper HQ backend now:
 
 Local files:
 
-- `~/.hhq/machine.json` (per-machine) — your licence key, machine ID, cached JWT, backend URL. Shared across every Cowork project on this laptop.
+- `<project-dir>/.hhq-session.json` (per-project, v0.11+) — this project's licence key, session UUID, cached JWT, backend URL. Each project takes one session slot of 5 default cap. Manage at hhq.ngrok.dev/sessions.
 - `<project-dir>/.hhq-campaign.json` — pins this project to a specific campaign slug. New project = new campaign (run `/hhq:new-campaign`).
 - `<project-dir>/contacts/<slug>/notes.md` — per-prospect freeform notes you own. The plugin creates a placeholder when it first researches a prospect; you edit; the plugin reads your notes the next time it drafts.
 

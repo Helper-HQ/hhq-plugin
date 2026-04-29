@@ -7,7 +7,7 @@ description: Create a new outbound campaign in this project. Use when the user w
 
 You are creating a new campaign for an already-onboarded Helper HQ user. A campaign is a separately-tracked outbound effort: its own offer, ICP, ranking signals, current batch, and per-contact cooldown state. The user's master contact list, base voice, and licence are shared across all campaigns; only the campaign-shaped fields (offer / ICP / signals / batch / cooldown) are scoped per-campaign.
 
-Typical use case: one Cowork project per campaign. The same machine licence covers all campaigns — opening a new project does not consume a machine slot, because auth is now stored at `~/.hhq/machine.json` (per-machine), not in the project folder.
+Typical use case: one Cowork project per campaign. Each Cowork project gets its own session (per-project auth at `<project-dir>/.hhq-session.json`); default cap is 5 simultaneous sessions per licence. Users self-manage at `https://hhq.ngrok.dev/sessions`.
 
 ## When this skill runs
 
@@ -25,25 +25,19 @@ Do NOT trigger when:
 
 Use `mcp__ccd_directory__request_directory` to get the persistent project folder path. Save as `<project-dir>`. Fall back to `~/.hhq/<random>/` only in local Claude Code CLI.
 
-### Step 0b — Check for machine auth
+### Step 0b — Resolve auth (per-project session)
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
-
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy auth file. Migrate inline:
-  1. Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`).
-  2. Copy `<project-dir>/.hhq-auth.json` to `~/.hhq/machine.json`.
-  3. Delete `<project-dir>/.hhq-auth.json`.
-  4. Continue.
-- **Not found and no legacy file** → user has not onboarded. Tell them: "You haven't activated Helper HQ yet — run `/hhq:onboard` to get set up first." Stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → user has not connected this project. Tell them: "This project isn't connected yet. Run `/hhq:connect` first to link it to your account, then come back here to add a new campaign — or run `/hhq:onboard` if you're brand-new to Helper HQ." Stop.
 
 ### Step 0c — Refresh JWT if expiring
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save new token + expires_at to `~/.hhq/machine.json` (preserving other fields).
-2. On 401, re-activate via `POST /api/activate` with saved `license_key` + `machine_id`. Save the new token. On 403 license_inactive / machine_limit_reached, tell the user and stop.
+1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
+2. On 401, the session was released — tell the user to `/hhq:connect`. Stop. Do NOT auto-re-activate.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`.
 
@@ -232,8 +226,8 @@ Stop.
 ## Things you must NOT do
 
 - Do NOT delete or modify other campaigns. This skill only creates a new one and pins this project to it.
-- Do NOT touch `~/.hhq/machine.json` except to refresh the JWT in Phase 0c. The licence and machine_id are shared across all campaigns.
+- Do NOT touch `<project-dir>/.hhq-session.json` except to refresh the JWT in Phase 0c.
 - Do NOT touch the user's base voice profile. That stays at user level on `/api/me/config`. The campaign's voice_additions are *additive*, not a replacement.
 - Do NOT copy contacts between campaigns — contacts are user-level master data shared across all campaigns. Per-campaign state (status, last_surfaced_at, research, messages) is created lazily as surfacing happens.
 - Do NOT create a campaign with slug `default`, `new`, `create`, `list`, or `me` — those are reserved.
-- Do NOT log the licence key, JWT, or contents of `~/.hhq/machine.json` in chat output.
+- Do NOT log the licence key, JWT, or contents of `<project-dir>/.hhq-session.json` in chat output.

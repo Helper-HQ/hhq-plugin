@@ -37,7 +37,7 @@ You'll be prompted to paste your **Helper HQ licence key** — it looks like `hh
 2. Walk you through the LinkedIn connections export (LinkedIn takes up to 24 hours to email it back, so we kick that off first)
 3. Capture your **offer**, **ICP** (ideal customer profile), and the **5 weighted signals** you want prospects ranked by
 
-That's a one-time, ~15-minute setup. The plugin saves your config to the Helper HQ backend and writes a small `.hhq-auth.json` to your project folder so it can recognise you in future chats.
+That's a one-time, ~15-minute setup. The plugin saves your config to the Helper HQ backend and writes a small `.hhq-session.json` to your project folder — one of 5 active session slots per licence. Manage your sessions across projects at the dashboard.
 
 ### 2. Import your LinkedIn connections
 

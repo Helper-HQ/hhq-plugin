@@ -45,25 +45,27 @@ If the user says one of the normal-flow phrases but the current batch is empty A
 
 ## Phase 0 — Auth and campaign
 
-### Step 0a — Resolve auth (machine-level)
+### Step 0a — Get the project folder
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the persistent Cowork project folder. The user accepts a permission prompt the first time. Save as `<project-dir>`.
 
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+If the tool isn't registered (rare CLI case), fall back to `~/.hhq/sales-helper/`.
+
+### Step 0b — Resolve auth (per-project session)
+
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
-- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "No auth — say `/hhq:connect` to link this project (or `/hhq:onboard` if you're brand-new)." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save new token + expires_at to `~/.hhq/machine.json`.
-2. On 401, re-activate via `POST /api/activate` with `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
+1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
+2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop. Do NOT auto-re-activate.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
 
-### Step 0b — Resolve current campaign (project-level)
-
-Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
+### Step 0c — Resolve current campaign
 
 Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
 
@@ -599,7 +601,7 @@ The pipeline URL is intentionally low-key — one line, no preamble. Per the v0.
 - Do NOT use exclamation marks in opener drafts (unless mirroring the user's voice in a future tier).
 - Do NOT pitch in the opener. Soft ask only.
 - Do NOT call the `/api/mcp/*` endpoints in V1 — leave them as documented seams. V1 does research + drafting in-context.
-- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `<project-dir>/.hhq-session.json` except to update `jwt` / `jwt_expires_at` after a refresh.
 - Do NOT log the JWT, licence key, or auth file contents.
 - Do NOT touch the user's config.
 

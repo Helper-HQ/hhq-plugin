@@ -27,24 +27,21 @@ Do NOT trigger if the user is mid-onboarding (let `onboard-user` route into this
 
 ## Phase 0 — Auth
 
-Use the `mcp__ccd_directory__request_directory` tool to get the project folder. Save the returned path as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if that tool isn't available (local Claude Code CLI).
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if the tool isn't registered (rare CLI case).
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
-
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. (Skip migration if `home_hhq_unavailable` — the project file is the canonical location for this session.) Continue.
-- **Not found and no legacy file** → "Looks like you haven't onboarded yet — let's do that first, it takes about 15 minutes." Stop. Do not parse any CSV.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "This project isn't connected to Helper HQ — say `/hhq:connect` to link it (or `/hhq:onboard` if you're brand-new)." Stop. Do not parse any CSV.
 
-If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for the API calls below.
+If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for API calls.
 
 If `jwt_expires_at` has passed (or is within 60 seconds of expiry):
-1. Refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>`, empty body.
-2. On 200: parse the new `token` and `expires_at`, write the updated values back to `~/.hhq/machine.json` (preserve all other fields), use the new token below.
-3. On 401 `invalid_token` (refresh rejected): re-activate. `POST <backend_url>/api/activate` with `{license_key, machine_id}` from the saved auth file. On 200, save the new token + expires_at to `~/.hhq/machine.json`. On 403 `license_inactive` or `machine_limit_reached`, tell the user and stop. On any other error, tell the user the backend isn't responding and stop.
+1. Refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
+2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop. Do NOT auto-re-activate.
 
-All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk` (`-s` silent, `-k` is harmless and covers any unusual cert situations).
+All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk`.
 
 Never log the JWT or licence key in chat output.
 
@@ -654,7 +651,7 @@ Do NOT echo full lists. Do NOT show example rows.
 
 - Do NOT write a local `contacts-master.csv` or any contact data to disk. The backend is the master.
 - Do NOT compute slugs, do dedup logic, or merge state client-side. The backend does all of that.
-- Do NOT modify `~/.hhq/machine.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `<project-dir>/.hhq-session.json` except to update `jwt` and `jwt_expires_at` after a refresh.
 - Do NOT call any other API endpoint or external service.
 - Do NOT delete prospects from the master if they're missing from a fresh export — the backend keeps everything by design (you couldn't delete them even if you tried; the import endpoint is upsert-only).
 - Do NOT attempt to parse `.zip` archives — instruct the user to extract `Connections.csv` (and `messages.csv` if present) first.

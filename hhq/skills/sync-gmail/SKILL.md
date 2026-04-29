@@ -36,19 +36,17 @@ Do NOT trigger if the user is mid-onboarding (the Gmail connector check happens 
 
 ## Phase 0 — Auth
 
-Use the `mcp__ccd_directory__request_directory` tool to get the project folder (fall back to `~/.hhq/sales-helper/` in local Claude Code CLI). Save as `<project-dir>`.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if the tool isn't registered (rare CLI case).
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
-
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. (Skip migration if `home_hhq_unavailable`.) Continue.
-- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "No auth — say `/hhq:connect` to link this project (or `/hhq:onboard` if you're brand-new)." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `~/.hhq/machine.json` (preserving other fields).
-2. On 401, re-activate via `POST /api/activate` with the saved `license_key` + `machine_id`. Save the new token. On 403, tell the user and stop.
+1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
+2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop. Do NOT auto-re-activate.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
 
@@ -223,7 +221,7 @@ Compute `<skipped one-way>` as `<total digest size> - <total batch posted>`. If 
 - Do NOT overwrite an existing contact's `source` to `gmail_messages` — preserve whatever it was (LinkedIn, business card, spreadsheet). Source tells us where the contact ORIGINATED, not the most recent touch.
 - Do NOT create non-bidirectional new contacts. One-way correspondents (newsletters, notifications) are noise — surfacing them dilutes the prospect ranking.
 - Do NOT ingest messages older than 30 days for contact creation. The brief's "active correspondent" window is 30 days hard.
-- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `<project-dir>/.hhq-session.json` except to update `jwt` / `jwt_expires_at` after a refresh.
 - Do NOT log the JWT, licence key, or auth file contents. Don't echo any email body content even if accidentally read.
 
 ## Edge cases to handle gracefully

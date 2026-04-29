@@ -21,27 +21,27 @@ Trigger when the user says:
 
 Or when invoked inline from `onboard-user` Phase 3 ("deep" branch).
 
-Do NOT trigger if `~/.hhq/machine.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `onboard-user` first ("No auth — say 'set me up' to onboard.").
+Do NOT trigger if `<project-dir>/.hhq-session.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `/hhq:connect` first.
 
 ## Phase 0 — Auth and campaign
 
-### Step 0a — Resolve auth (machine-level)
+### Step 0a — Get the project folder
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the project folder. Save as `<project-dir>`. CLI fallback: `~/.hhq/sales-helper/`.
 
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+### Step 0b — Resolve auth (per-project session)
+
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. Continue.
-- **Not found, no legacy file** → tell the user and stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "No auth — say `/hhq:connect` to link this project." Stop.
 
-If `jwt_expires_at` is past or within 60s of expiry, run the standard refresh / re-activate fallback (see `ingest-contacts` Phase 0 for the exact protocol). Save token updates to `~/.hhq/machine.json`.
+If `jwt_expires_at` is past or within 60s of expiry, refresh: POST `<backend_url>/api/refresh`, save updates to `.hhq-session.json`. On 401 tell the user the session was released and to `/hhq:connect`. Do not auto-re-activate.
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key in chat.
 
-### Step 0b — Resolve current campaign (project-level)
-
-Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
+### Step 0c — Resolve current campaign
 
 Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
 

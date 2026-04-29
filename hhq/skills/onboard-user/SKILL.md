@@ -9,13 +9,17 @@ You are running the one-time setup for the Sales Helper Lite plugin. You activat
 
 This is the user's FIRST experience of the plugin. Be warm, brief, and conversational. Total target time: 15 minutes — most of it is the offer + ICP + signals deep dive. Activation and the LinkedIn step are fast.
 
+**Architecture note (v0.11+).** Auth is per-project, not per-machine. The session file lives at `<project-dir>/.hhq-session.json`; there is no `~/.hhq/`, no shared cross-project token. Each Cowork project gets its own session — default cap is 5 simultaneous sessions per licence, manageable from `https://hhq.ngrok.dev/sessions`.
+
 ## When this skill runs
 
 Trigger when:
-- No `~/.hhq/machine.json` exists on this machine (and no legacy `<project-dir>/.hhq-auth.json` to migrate from) and the user is interacting with Helper HQ for the first time, or
+- No `<project-dir>/.hhq-session.json` exists in the current Cowork project (and no legacy `<project-dir>/.hhq-auth.json` to migrate from) and the user is interacting with Helper HQ for the first time *in this project*, or
 - The user explicitly asks to re-onboard, reset, reconfigure, or "start over."
 
-If the user wants a *new campaign* (different offer / ICP from what's already set up), route them to `/hhq:new-campaign` instead — this skill is for first-time setup or full reset.
+If the user already onboarded somewhere else and just needs THIS project hooked up, route them to `/hhq:connect` instead — much faster, no offer/ICP/voice questions.
+
+If the user wants a *new campaign* (different offer / ICP from one already on their account), route them to `/hhq:new-campaign` instead.
 
 ## Backend URL (V1 dogfood)
 
@@ -31,62 +35,40 @@ This is a stable ngrok subdomain pointing at the local Herd backend during V1 do
 
 This phase has to happen first, before anything else, because the rest of onboarding writes to the backend.
 
-Auth is stored at the **machine level** in `~/.hhq/machine.json` (so opening a new Cowork project for a new campaign does NOT consume a machine slot — same machine, same auth). Each project pins itself to a specific campaign via `<project-dir>/.hhq-campaign.json`.
-
 ### Step 0a — Get the project folder
 
-Use the `mcp__ccd_directory__request_directory` tool with no `path` argument to get the persistent project folder. The user will accept a permission prompt the first time.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the persistent Cowork project folder. The user accepts a permission prompt the first time. Save as `<project-dir>`.
 
-Save the returned path as `<project-dir>` for the rest of this skill. The campaign-pin file lives there.
+If the tool isn't registered (rare CLI case), fall back to `~/.hhq/sales-helper/` and create it if missing.
 
-If the tool isn't available (local Claude Code CLI), fall back to `~/.hhq/sales-helper/` and create it if missing.
+### Step 0b — Check for existing project session
 
-### Step 0a.5 — Request access to `~/.hhq/` (per-machine auth folder) — REQUIRED CALL
+Read `<project-dir>/.hhq-session.json`.
 
-**You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step.** Do not skip it. Do not assume Cowork has already granted or denied access — the call IS the mechanism by which Cowork shows the user a permission prompt (*"Helper HQ wants access to ~/.hhq"*). Without making the call there is no prompt, no grant, no way to read or write the per-machine auth file. Skipping the call is the bug that breaks v0.10's per-machine semantics — every Cowork project would consume its own machine slot.
-
-This folder holds `machine.json` — the per-machine licence + cached JWT. Sharing it across all the user's Cowork projects on the same laptop is what lets a single licence cover multiple campaigns without burning a machine slot per project.
-
-Three possible outcomes from making the call:
-
-- **Tool returns success (user approves the prompt OR Cowork has already granted access from a prior project / skill invocation)** → continue to Step 0b. Reads and writes to `~/.hhq/` work for the rest of the session.
-- **Tool returns an error indicating the user declined** → set `home_hhq_unavailable = true` in your skill memory. Continue to Step 0b — the skill will fall back to per-project auth at `<project-dir>/.hhq-auth.json`. Tell the user once, briefly: "OK, I'll use a per-project auth file instead. Each Cowork project will need its own licence activation, which uses one of your machine slots."
-- **Tool itself is not registered in this session** (rare CLI-only case where the CCD MCP isn't loaded) → treat as approved. CLI doesn't sandbox `~/.hhq/`. Continue.
-
-Do NOT short-circuit this step with assumptions like *"the shared ~/.hhq folder isn't accessible from Cowork"* — that conclusion can only be reached *after* making the call and getting back a denial. If you haven't made the call, you don't know.
-
-### Step 0b — Check for existing machine auth
-
-If `home_hhq_unavailable` is set, skip directly to checking `<project-dir>/.hhq-auth.json` (the per-project fallback) below.
-
-Otherwise, read `~/.hhq/machine.json`.
-
-- **Found and you are NOT explicitly re-onboarding** → tell the user: "Your machine is already activated. To create a new outbound campaign in this project, run `/hhq:new-campaign`. To redo your full setup (overwrite voice + default-campaign offer/ICP/signals), say 'redo onboarding' or 'start over'. (new campaign / redo onboarding / cancel)". Route accordingly. If "new campaign" → stop and tell them to run `/hhq:new-campaign`. If "redo onboarding" → continue, reuse machine_id and licence_key from the existing file. If "cancel" → stop.
-- **Found and user IS re-onboarding** → continue, reuse machine_id and licence_key.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy auth file from before v0.10. Migrate it inline:
-  1. `mkdir -p ~/.hhq`.
-  2. Copy `<project-dir>/.hhq-auth.json` to `~/.hhq/machine.json`.
-  3. Delete `<project-dir>/.hhq-auth.json`.
-  4. Then proceed as if "Found and you are NOT explicitly re-onboarding" above.
-- **Not found and no legacy file** → genuine first-time setup. Continue to Step 0c.
+- **Found and the user is NOT explicitly re-onboarding** → this project's already activated. Tell them: "This project's already connected. Want to (a) create a new campaign here (run `/hhq:new-campaign`), (b) redo your full onboarding from scratch (overwrites voice + default campaign config), or (c) cancel?". Route accordingly. If "new campaign" → stop, tell them to run `/hhq:new-campaign`. If "redo" → continue, reuse `machine_id` + `license_key` from the existing file. If "cancel" → stop.
+- **Found and user IS re-onboarding** → continue, reuse the existing `machine_id` + `license_key`.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate inline by renaming the file to `.hhq-session.json`. Then proceed as "Found and not re-onboarding" above.
+- **Neither file found** → genuine first-time setup in this project. Continue to Step 0c.
 
 ### Step 0c — Get the licence key
 
-Skip if reusing an existing licence key from the machine.json (re-onboarding case).
+Skip if reusing an existing licence key from the session file (re-onboarding case).
 
 Otherwise ask:
 
-> "First, paste your Helper HQ licence key. It looks like `hhq_...` and you got it in your purchase email."
+> "First, paste your Helper HQ licence key. It looks like `hhq_...` (or `HHQ-...`) and you got it in your purchase email.
+>
+> Optional: what should I call this project? (It shows up in your sessions list at hhq.ngrok.dev/sessions so you can tell which is which.) Skip if not sure."
 
-Validate the shape: starts with `hhq_`, length at least 16 chars. If invalid, ask again with a brief explanation.
+Validate licence: starts with `hhq_` or `HHQ-`, length ≥ 16 chars. Project label is optional, max 80 chars.
 
 ### Step 0d — Activate
 
-For first-time setup: generate a UUIDv4 as the `machine_id`. Use `powershell -NoProfile -c '[guid]::NewGuid().ToString()'` on Windows or `uuidgen` on Mac/Linux. Strip whitespace.
+For a fresh project: generate a UUIDv4 as the session UUID (sent as `machine_id` to the backend). Windows: `powershell -NoProfile -c '[guid]::NewGuid().ToString()'`. Mac/Linux: `uuidgen`. Strip whitespace.
 
-For re-onboarding: reuse the existing `machine_id` from `~/.hhq/machine.json`.
+For re-onboarding: reuse the existing `machine_id` from `.hhq-session.json`.
 
-Call the backend:
+POST to the backend:
 
 ```
 POST <backend-url>/api/activate
@@ -94,25 +76,24 @@ Content-Type: application/json
 
 {
   "license_key": "<the licence key>",
-  "machine_id": "<the UUID>"
+  "machine_id": "<the UUID>",
+  "project_label": "<the label or omit>"
 }
 ```
 
-Use `curl -sk -X POST ... -H 'Content-Type: application/json' -d '{...}'` via the Bash tool.
+Use `curl -sk -X POST ...` via the Bash tool.
 
 Handle the response:
 
-- **HTTP 200** → parse the JSON. Backend auto-creates a `default` campaign for new users on activation. Save `~/.hhq/machine.json` (Step 0e) and continue.
-- **HTTP 404 `license_not_found`** → ask the user to re-paste from their purchase email. Loop back to Step 0c.
+- **HTTP 200** → parse the JSON. Backend auto-creates a `default` campaign for new users on activation. Save `<project-dir>/.hhq-session.json` (Step 0e) and continue.
+- **HTTP 404 `license_not_found`** → ask the user to re-paste. Loop back to Step 0c.
 - **HTTP 403 `license_inactive`** → revoked / suspended / expired. Tell user to contact `help@helperhq.co` and stop.
-- **HTTP 403 `machine_limit_reached`** → "Your licence is at its 3-machine limit. Auth is per-machine in v0.10+ — running multiple campaigns from the same laptop does NOT consume extra slots. If you really need more machines, contact `help@helperhq.co`." Stop.
-- **HTTP 422 / network error** → show the error, don't write a partial auth file, stop.
+- **HTTP 403 `session_limit_reached`** → relay the backend's message verbatim (it includes the URL to `/sessions`). The user releases a session in their dashboard, then re-runs onboarding. Stop.
+- **HTTP 422 / network error** → show the error, don't write a partial session file, stop.
 
-### Step 0e — Save the auth and campaign files
+### Step 0e — Save the session and campaign files
 
-**If `home_hhq_unavailable` is NOT set** (canonical path — user approved access to `~/.hhq/`):
-
-Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`). Write `~/.hhq/machine.json`:
+Write `<project-dir>/.hhq-session.json`:
 
 ```json
 {
@@ -122,17 +103,14 @@ Create `~/.hhq/` if missing (`mkdir -p ~/.hhq`). Write `~/.hhq/machine.json`:
   "jwt": "<the token returned by /api/activate>",
   "jwt_expires_at": "<the expires_at returned>",
   "tier": "<lite|pro|elite>",
-  "helpers": ["<the helpers array>"]
+  "helpers": ["<the helpers array>"],
+  "project_label": "<the label or null>"
 }
 ```
 
-Update `tier` and `helpers` in this file every refresh/re-activation in case they changed.
+Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh/re-activation.
 
-**If `home_hhq_unavailable` IS set** (user declined `~/.hhq/` access in Step 0a.5):
-
-Write the auth payload to `<project-dir>/.hhq-auth.json` instead, with the exact same shape (`backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`, `tier`, `helpers`). This is the per-project fallback. Each new Cowork project run will need its own activation under this path, consuming one machine slot per project.
-
-Either way, also write `<project-dir>/.hhq-campaign.json`:
+Also write `<project-dir>/.hhq-campaign.json`:
 
 ```json
 {
@@ -142,7 +120,7 @@ Either way, also write `<project-dir>/.hhq-campaign.json`:
 
 This pins the current Cowork project to the `default` campaign. Subsequent skills (surface-next-5, research-and-draft, etc.) read this file to know which campaign's context to operate in. To run a parallel outbound effort with a different offer/ICP, the user opens a new Cowork project and runs `/hhq:new-campaign` there.
 
-If re-onboarding (machine.json already existed), overwrite both files.
+If re-onboarding (session file already existed), overwrite both files.
 
 ## Phase 0.5 — Gmail connector prereq check
 
@@ -624,7 +602,7 @@ Save the answers to the backend in **two PUTs**:
 1. User-level config (voice, fit, linkedin_export, quick_start, tier, onboarded_at, version) → `PUT /api/me/config`.
 2. Default campaign config (offer*, icp*, signals) → `PUT /api/me/campaigns/default/config`.
 
-Read `~/.hhq/machine.json` to get `backend_url` and `jwt`.
+Read `<project-dir>/.hhq-session.json` to get `backend_url` and `jwt`.
 
 ### Step 8.0 — GET current configs first (merge, don't clobber)
 
@@ -725,13 +703,13 @@ If either call fails:
 
 The `tier` field is set to `"lite"` for V1. Pro and Elite tiers will check this field at runtime to gate features when they ship.
 
-Do NOT write any other local files. The only local files are `~/.hhq/machine.json` (per-machine auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin). Everything else lives backend-side.
+Do NOT write any other local files. The only local files are `<project-dir>/.hhq-session.json` (per-project session auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin). Everything else lives backend-side.
 
 Then close warmly. **Two close variants depending on whether Phase 7 captured quick-start URLs:**
 
 **Variant A — quick-start URLs were saved (`config.quick_start.urls.length > 0`):**
 
-> "All set — everything's saved. Your machine licence is at `~/.hhq/machine.json` and this project is pinned to your `default` campaign via `.hhq-campaign.json`. Keep both around.
+> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://hhq.ngrok.dev/sessions`.
 >
 > Your LinkedIn export is in flight (usually a few hours, sometimes up to 24). And — your `<N>` quick-start prospects are queued. Whenever you're ready, say 'let's go on quick start' and I'll research each, draft an opener, and have them ready to send in a few minutes.
 >
@@ -741,7 +719,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant B — no quick-start URLs (`config.quick_start` is null):**
 
-> "All set — everything's saved. Your machine licence is at `~/.hhq/machine.json` and this project is pinned to your `default` campaign via `.hhq-campaign.json`. Keep both around.
+> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://hhq.ngrok.dev/sessions`.
 >
 > Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
 >
@@ -749,7 +727,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 ## Things you must NOT do
 
-- Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local files are `~/.hhq/machine.json` (per-machine auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin).
+- Do NOT write `config.json`, `contacts-master.csv`, or any user-data file to local disk. All user state lives in the backend now. The only local files are `<project-dir>/.hhq-session.json` (per-project session auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin).
 - Do NOT save raw page contents, PDFs, DOCX text, or LinkedIn message bodies anywhere. Synthesis is the only persistent artifact — distil and forget the source content.
 - Do NOT save uploaded files to disk or to the backend. PDF/DOCX inputs in Phase 6a are read inline; the file itself is the user's responsibility to keep.
 - Do NOT pressure for voice samples. Phase 6 is gravy — if the user skips, save `voice_profile: null`; they can build it later with `tune-voice`.
@@ -759,4 +737,4 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 - Do NOT ingest contacts. That's the `ingest-contacts` skill.
 - Do NOT promise weekly cadence — V1 is on-demand only.
 - Do NOT promise Pro or Elite features. The `tier` field exists for forward compatibility, but V1 is Lite-only.
-- Do NOT log the licence key, JWT, or any contents of `~/.hhq/machine.json` in chat output. Those are secrets.
+- Do NOT log the licence key, JWT, or any contents of `<project-dir>/.hhq-session.json` in chat output. Those are secrets.

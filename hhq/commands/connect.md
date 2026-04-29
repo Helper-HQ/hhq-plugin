@@ -13,4 +13,4 @@ The user invoked this command because they want to connect an already-set-up acc
 - Does NOT render help (use `/hhq:help` for that).
 - Does NOT call any backend API directly — `connect` handles all backend interaction.
 - Does NOT ask onboarding questions (offer, ICP, voice, signals). For first-time setup, run `/hhq:onboard` instead.
-- Does NOT read or write `~/.hhq/machine.json` or `<project>/.hhq-campaign.json` directly — `connect` handles that.
+- Does NOT read or write `<project>/.hhq-session.json` or `<project>/.hhq-campaign.json` directly — `connect` handles that.

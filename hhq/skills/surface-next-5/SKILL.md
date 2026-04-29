@@ -23,31 +23,31 @@ Do NOT trigger if the user is asking for one specific person, asking general que
 
 ## Phase 0 — Auth and campaign
 
-### Step 0a — Resolve auth (machine-level)
+### Step 0a — Get the project folder
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the persistent Cowork project folder. The user accepts a permission prompt the first time. Save as `<project-dir>`.
 
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+If the tool isn't registered (rare CLI case), fall back to `~/.hhq/sales-helper/`.
+
+### Step 0b — Resolve auth (per-project session)
+
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy `<project-dir>/.hhq-auth.json` → `~/.hhq/machine.json`, delete the legacy file. Continue.
-- **Not found and no legacy file** → "Looks like you haven't onboarded yet — say 'set me up' to get started." Stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "This project isn't connected to Helper HQ — say `/hhq:connect` to link it (or `/hhq:onboard` if you're brand-new)." Stop.
 
 If `jwt_expires_at` is past or within 60s of expiry:
-1. `POST <backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `~/.hhq/machine.json` (preserving other fields).
-2. On 401, re-activate via `POST /api/activate` with `license_key` + `machine_id`. Save the new token. On 403 license_inactive / machine_limit_reached, tell the user and stop.
+1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
+2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop. Do NOT auto-re-activate; that would silently consume a new session slot.
 
-All API calls below use `Authorization: Bearer <jwt>` and `curl -sk` (`-s` silent, `-k` is harmless and covers any unusual cert situations).
+All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
 
-Never log the JWT or licence key.
+### Step 0c — Resolve current campaign
 
-### Step 0b — Resolve current campaign (project-level)
+Read `<project-dir>/.hhq-campaign.json` for `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
 
-Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
-
-Read `<project-dir>/.hhq-campaign.json` to get `campaign_slug`. If missing, write it with `{"campaign_slug": "default"}` and use `default`.
-
-This skill operates inside that campaign's context — its offer, ICP, signals, batch, and per-contact cooldown state. The user can run a parallel campaign in a separate Cowork project; auth is shared, campaign context is not.
+This skill operates inside that campaign's context — its offer, ICP, signals, batch, and per-contact cooldown state. To run a parallel campaign with a different offer/ICP, the user opens a separate Cowork project.
 
 ## Remote-skill seam (V1 dogfood)
 
@@ -261,7 +261,7 @@ Do NOT do the research yourself in this skill. Do NOT draft any messages. That's
 
 - Do NOT do any LinkedIn enrichment, web fetch, or per-prospect research here. Pure list-based ranking.
 - Do NOT call `/api/mcp/rank_prospects` in V1 — leave that seam for V2. V1 ranks in-context.
-- Do NOT modify `~/.hhq/machine.json` except to update `jwt` and `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `<project-dir>/.hhq-session.json` except to update `jwt` and `jwt_expires_at` after a refresh.
 - Do NOT modify the user's config or the campaign's config.
 - Do NOT surface more than 5. Hard cap, also enforced by the backend (`PUT /me/campaigns/{slug}/current-batch` rejects > 5).
 - Do NOT pad weak picks to fill 5 — if only 3 are good, surface 3.

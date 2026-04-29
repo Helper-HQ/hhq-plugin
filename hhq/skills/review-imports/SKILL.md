@@ -28,17 +28,15 @@ Also trigger inline if `ingest-contacts` reports `review_count > 0` AND the user
 
 ## Phase 0 — Auth
 
-Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
+Use `mcp__ccd_directory__request_directory` (no arguments) to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` if the tool isn't registered (rare CLI case).
 
-**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
-
-Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
+Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 - **Found** → parse `backend_url`, `license_key`, `machine_id`, `jwt`, `jwt_expires_at`. Continue.
-- **Not found, but `<project-dir>/.hhq-auth.json` exists** → legacy file from before v0.10. Migrate inline: `mkdir -p ~/.hhq`, copy → `~/.hhq/machine.json`, delete legacy. (Skip migration if `home_hhq_unavailable`.) Continue.
-- **Not found, no legacy file** → "No auth — say 'set me up' to onboard." Stop.
+- **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming to `.hhq-session.json`. Continue.
+- **Neither found** → "No auth — say `/hhq:connect` to link this project (or `/hhq:onboard` if you're brand-new)." Stop.
 
-Refresh / re-activate if expired (same flow as other skills; save updates to `~/.hhq/machine.json`). Use `Authorization: Bearer <jwt>` and `curl -sk` for all calls. Never log the JWT or licence key.
+Refresh JWT if expired: POST `<backend_url>/api/refresh`, save updates to `.hhq-session.json`. On 401, tell the user the session was released and to `/hhq:connect`. Do not auto-re-activate. Use `Authorization: Bearer <jwt>` and `curl -sk` for all calls. Never log the JWT or licence key.
 
 ## Phase 1 — Fetch pending items
 
@@ -191,7 +189,7 @@ After the loop completes (or the user stopped), give a brief tally:
 
 - Do NOT batch-resolve items. One at a time, with the user's confirmation per item. The point of the queue is the user's judgment — automating it would defeat the purpose.
 - Do NOT show or echo internal IDs (queue id, contact id) in the prose UI. Show slugs / names only.
-- Do NOT modify `~/.hhq/machine.json` except to update `jwt` / `jwt_expires_at` after a refresh / re-activate.
+- Do NOT modify `<project-dir>/.hhq-session.json` except to update `jwt` / `jwt_expires_at` after a refresh.
 - Do NOT show internal scoring math beyond the single `match_score` percentage and `match_reason` text the backend sends.
 - Do NOT log the JWT or licence key.
 - Do NOT pre-fetch all items and PATCH them eagerly — fetch the list once at the top, walk through it sequentially. If a 422-already-resolved or 404-not-found pops up, the user is reviewing in another session; just skip it.
