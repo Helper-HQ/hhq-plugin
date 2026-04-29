@@ -41,19 +41,19 @@ Save the returned path as `<project-dir>` for the rest of this skill. The campai
 
 If the tool isn't available (local Claude Code CLI), fall back to `~/.hhq/sales-helper/` and create it if missing.
 
-### Step 0a.5 — Request access to `~/.hhq/` (per-machine auth folder)
+### Step 0a.5 — Request access to `~/.hhq/` (per-machine auth folder) — REQUIRED CALL
 
-Call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request access to the per-machine auth folder.
+**You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step.** Do not skip it. Do not assume Cowork has already granted or denied access — the call IS the mechanism by which Cowork shows the user a permission prompt (*"Helper HQ wants access to ~/.hhq"*). Without making the call there is no prompt, no grant, no way to read or write the per-machine auth file. Skipping the call is the bug that breaks v0.10's per-machine semantics — every Cowork project would consume its own machine slot.
 
-The user sees a permission prompt the first time in any Cowork project: *"Helper HQ wants access to ~/.hhq"*. Approving gives the plugin read/write access to that folder for the rest of this project's history. The grant is per-Cowork-project; subsequent skill invocations in the same project don't re-prompt.
+This folder holds `machine.json` — the per-machine licence + cached JWT. Sharing it across all the user's Cowork projects on the same laptop is what lets a single licence cover multiple campaigns without burning a machine slot per project.
 
-This folder holds `machine.json` — the per-machine licence + cached JWT. Sharing it across all your Cowork projects on the same laptop is what lets a single licence cover multiple campaigns without burning a machine slot per project.
+Three possible outcomes from making the call:
 
-Three outcomes:
+- **Tool returns success (user approves the prompt OR Cowork has already granted access from a prior project / skill invocation)** → continue to Step 0b. Reads and writes to `~/.hhq/` work for the rest of the session.
+- **Tool returns an error indicating the user declined** → set `home_hhq_unavailable = true` in your skill memory. Continue to Step 0b — the skill will fall back to per-project auth at `<project-dir>/.hhq-auth.json`. Tell the user once, briefly: "OK, I'll use a per-project auth file instead. Each Cowork project will need its own licence activation, which uses one of your machine slots."
+- **Tool itself is not registered in this session** (rare CLI-only case where the CCD MCP isn't loaded) → treat as approved. CLI doesn't sandbox `~/.hhq/`. Continue.
 
-- **Approved** → continue to Step 0b. Reads and writes to `~/.hhq/` work for the rest of the session.
-- **Declined** → set a `home_hhq_unavailable` flag in your skill memory and continue to Step 0b. The skill falls back to per-project auth at `<project-dir>/.hhq-auth.json`. Tell the user once: "OK, I'll use a per-project auth file instead. Each Cowork project will need its own licence activation, which uses one of your machine slots."
-- **Tool unavailable** (e.g. local Claude Code CLI where the tool may not be present, or the tool returns an error suggesting it's unsupported) → treat as "approved" since CLI doesn't sandbox `~/.hhq/`. Continue to Step 0b.
+Do NOT short-circuit this step with assumptions like *"the shared ~/.hhq folder isn't accessible from Cowork"* — that conclusion can only be reached *after* making the call and getting back a denial. If you haven't made the call, you don't know.
 
 ### Step 0b — Check for existing machine auth
 

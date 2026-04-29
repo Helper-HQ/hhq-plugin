@@ -30,7 +30,7 @@ Also trigger inline if `ingest-contacts` reports `review_count > 0` AND the user
 
 Use `mcp__ccd_directory__request_directory` to get the project folder. Save as `<project-dir>`. Fall back to `~/.hhq/sales-helper/` in local Claude Code CLI.
 
-**Per-machine folder access.** First, call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` to request Cowork access to the per-machine auth folder. The user sees a one-time prompt per Cowork project; approve once and `~/.hhq/` is readable for the rest of the project's history. If declined, set `home_hhq_unavailable = true` and fall back to reading per-project `<project-dir>/.hhq-auth.json` instead. If the tool is unavailable (CLI), treat as approved.
+**Per-machine folder access — REQUIRED CALL.** You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step. Do not skip it. The call IS the mechanism by which Cowork shows the user a permission prompt — without it there's no grant, you cannot read the per-machine auth file, and every Cowork project burns its own slot (breaking v0.10's per-machine semantics). Three outcomes: (a) success / already-granted → `~/.hhq/machine.json` is readable; (b) error indicating the user declined → set `home_hhq_unavailable = true` and fall back to `<project-dir>/.hhq-auth.json`; (c) tool not registered in this session (rare CLI-only case) → treat as approved. Do NOT short-circuit with phrases like "the shared ~/.hhq folder isn't accessible from Cowork" — that conclusion is only valid after you've made the call and gotten back a denial.
 
 Then read `~/.hhq/machine.json` (or `<project-dir>/.hhq-auth.json` if `home_hhq_unavailable`).
 

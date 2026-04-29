@@ -33,13 +33,17 @@ Use `mcp__ccd_directory__request_directory` with no `path` argument. The user ac
 
 If the tool isn't available (CLI), fall back to `~/.hhq/sales-helper/`.
 
-### Step 0b — Request access to `~/.hhq/`
+### Step 0b — Request access to `~/.hhq/` — REQUIRED CALL
 
-Call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})`. The user sees a one-time-per-project permission prompt for the per-machine auth folder.
+**You MUST call `mcp__ccd_directory__request_directory({"path": "~/.hhq"})` at this step.** Do not skip it. Do not assume Cowork has already granted or denied access — the call IS the mechanism by which Cowork shows the user a permission prompt. Without this call there is no prompt, no grant, and no way to read or write the per-machine auth file. Skipping it is the bug — every Cowork project would consume its own machine slot, breaking the v0.10 architecture's per-machine semantics.
 
-- **Approved** → continue, canonical auth at `~/.hhq/machine.json`.
-- **Declined** → set `home_hhq_unavailable = true`. Auth lives at `<project-dir>/.hhq-auth.json` instead. Tell the user once: "OK, this project will use a project-local auth file — each Cowork project will need its own activation."
-- **Tool unavailable** (CLI) → treat as approved.
+Three possible outcomes from the call:
+
+- **Tool returns success (user approves the prompt OR Cowork has already granted access from a prior project)** → `~/.hhq/` is now readable and writable in this session. Continue with the canonical auth path at `~/.hhq/machine.json`.
+- **Tool returns an error indicating the user declined** → set `home_hhq_unavailable = true`. Auth falls back to `<project-dir>/.hhq-auth.json` for this project. Tell the user once, briefly: "OK, this project will use project-local auth — each Cowork project will need its own activation, consuming one of your machine slots."
+- **Tool itself is not registered in this session** (rare; only in some local Claude Code CLI environments where the CCD MCP isn't loaded) → treat as approved. CLI doesn't sandbox `~/.hhq/`. Continue.
+
+Do NOT short-circuit this with phrases like *"the shared ~/.hhq folder isn't accessible from Cowork"* — that conclusion can only be reached by *making the call and getting back a denial*. If you haven't made the call, you don't know.
 
 ## Phase 1 — Check existing auth (project-local AND per-machine)
 
