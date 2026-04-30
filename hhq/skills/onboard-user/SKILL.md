@@ -9,7 +9,7 @@ You are running the one-time setup for the Sales Helper Lite plugin. You activat
 
 This is the user's FIRST experience of the plugin. Be warm, brief, and conversational. Total target time: 15 minutes — most of it is the offer + ICP + signals deep dive. Activation and the LinkedIn step are fast.
 
-**Architecture note (v0.11+).** Auth is per-project, not per-machine. The session file lives at `<project-dir>/.hhq-session.json`; there is no `~/.hhq/`, no shared cross-project token. Each Cowork project gets its own session — default cap is 5 simultaneous sessions per licence, manageable from `https://hhq.ngrok.dev/sessions`.
+**Architecture note (v0.11+).** Auth is per-project, not per-machine. The session file lives at `<project-dir>/.hhq-session.json`; there is no `~/.hhq/`, no shared cross-project token. Each Cowork project gets its own session — default cap is 5 simultaneous sessions per licence, manageable from `https://helperhq.co/sessions`.
 
 ## When this skill runs
 
@@ -26,7 +26,7 @@ If the user wants a *new campaign* (different offer / ICP from one already on th
 The Helper HQ backend lives at:
 
 ```
-https://hhq.ngrok.dev
+https://helperhq.co
 ```
 
 This is a stable ngrok subdomain pointing at the local Herd backend during V1 dogfood. The URL doesn't rotate, but the tunnel is only up when the admin (Brad) has ngrok running. If activation or any API call returns a network error, the tunnel is probably down — tell the user to retry in a few minutes; do not change the URL or write a partial auth file. Production will replace this with a stable Helper HQ domain.
@@ -58,7 +58,7 @@ Otherwise ask:
 
 > "First, paste your Helper HQ licence key. It looks like `hhq_...` (or `HHQ-...`) and you got it in your purchase email.
 >
-> Optional: what should I call this project? (It shows up in your sessions list at hhq.ngrok.dev/sessions so you can tell which is which.) Skip if not sure."
+> Optional: what should I call this project? (It shows up in your sessions list at helperhq.co/sessions so you can tell which is which.) Skip if not sure."
 
 Validate licence: starts with `hhq_` or `HHQ-`, length ≥ 16 chars. Project label is optional, max 80 chars.
 
@@ -97,7 +97,7 @@ Write `<project-dir>/.hhq-session.json`:
 
 ```json
 {
-  "backend_url": "https://hhq.ngrok.dev",
+  "backend_url": "https://helperhq.co",
   "license_key": "<the licence key>",
   "session_id": "<the UUID>",
   "jwt": "<the token returned by /api/activate>",
@@ -709,7 +709,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant A — quick-start URLs were saved (`config.quick_start.urls.length > 0`):**
 
-> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://hhq.ngrok.dev/sessions`.
+> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://helperhq.co/sessions`.
 >
 > Your LinkedIn export is in flight (usually a few hours, sometimes up to 24). And — your `<N>` quick-start prospects are queued. Whenever you're ready, say 'let's go on quick start' and I'll research each, draft an opener, and have them ready to send in a few minutes.
 >
@@ -719,7 +719,7 @@ Then close warmly. **Two close variants depending on whether Phase 7 captured qu
 
 **Variant B — no quick-start URLs (`config.quick_start` is null):**
 
-> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://hhq.ngrok.dev/sessions`.
+> "All set — everything's saved. Your project session is at `.hhq-session.json` and pinned to your `default` campaign via `.hhq-campaign.json`. Both live in this project folder. Manage all your sessions across projects at `https://helperhq.co/sessions`.
 >
 > Your LinkedIn export is in flight. When the email lands (usually a few hours, sometimes up to 24), open a fresh chat in this same project, drop the CSV in, and say 'I've got my LinkedIn export'. I'll take it from there.
 >

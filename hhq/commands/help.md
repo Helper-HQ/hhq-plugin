@@ -37,7 +37,7 @@ Active skills:
 
 • **onboard-user** — One-time first-time setup. Captures your offer + hook + URLs (read inline to build an offer profile), ICP, 5 weighted signals, and voice samples (brand guide, articles, LinkedIn message URLs — read inline to build a voice profile you review and tune); activates your licence on this project (one of 5 default session slots); kicks off your LinkedIn export (Connections + Messages). Triggers when you're new or say "set me up", "re-onboard", "start over".
 
-• **connect** — Already onboarded somewhere else? Connect this Cowork project to your account without re-doing the full setup. Paste your licence key, optionally name the project, pick which campaign to pin this project to (or create a new one). Each Cowork project gets its own session — manage your 5 active session slots at `https://hhq.ngrok.dev/sessions`. Triggers on "connect", "connect this project", "I have a licence key, just connect", or `/hhq:connect`.
+• **connect** — Already onboarded somewhere else? Connect this Cowork project to your account without re-doing the full setup. Paste your licence key, optionally name the project, pick which campaign to pin this project to (or create a new one). Each Cowork project gets its own session — manage your 5 active session slots at `https://helperhq.co/sessions`. Triggers on "connect", "connect this project", "I have a licence key, just connect", or `/hhq:connect`.
 
 • **ingest-contacts** — Imports your contacts from any of four file-based sources: LinkedIn export (Connections.csv + messages.csv), generic spreadsheet (xlsx/csv/xls), CRM export (HubSpot/Salesforce/Pipedrive), or business card scan (PDF or image). Auto-detects file type and routes to the right branch. For spreadsheets / CRM exports, walks you through column mapping and stage-label mapping. For card scans, runs vision extraction with per-card review for misreads or gaps. Triggers when you drop any of those files in chat or say "I've got my LinkedIn export", "import my contacts", "import my spreadsheet", "I have a CRM export", "scan my cards".
 
@@ -63,7 +63,7 @@ The two skills are also offered inline during onboarding — pick "deep" at the 
 
 ═══ Storage ═══
 
-Your contact data, config, and current batch live on the Helper HQ backend. Each Cowork project has its own `.hhq-session.json` (this project's session token, one of 5 default active sessions per licence) and `.hhq-campaign.json` (pinning the project to a specific campaign). Manage your sessions across all projects at `https://hhq.ngrok.dev/sessions`. Your per-prospect freeform notes live in the project folder at `contacts/<slug>/notes.md` — open and edit those any time, the plugin reads them when drafting.
+Your contact data, config, and current batch live on the Helper HQ backend. Each Cowork project has its own `.hhq-session.json` (this project's session token, one of 5 default active sessions per licence) and `.hhq-campaign.json` (pinning the project to a specific campaign). Manage your sessions across all projects at `https://helperhq.co/sessions`. Your per-prospect freeform notes live in the project folder at `contacts/<slug>/notes.md` — open and edit those any time, the plugin reads them when drafting.
 
 ═══ Need a hand? ═══
 

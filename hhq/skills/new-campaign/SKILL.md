@@ -7,7 +7,7 @@ description: Create a new outbound campaign in this project. Use when the user w
 
 You are creating a new campaign for an already-onboarded Helper HQ user. A campaign is a separately-tracked outbound effort: its own offer, ICP, ranking signals, current batch, and per-contact cooldown state. The user's master contact list, base voice, and licence are shared across all campaigns; only the campaign-shaped fields (offer / ICP / signals / batch / cooldown) are scoped per-campaign.
 
-Typical use case: one Cowork project per campaign. Each Cowork project gets its own session (per-project auth at `<project-dir>/.hhq-session.json`); default cap is 5 simultaneous sessions per licence. Users self-manage at `https://hhq.ngrok.dev/sessions`.
+Typical use case: one Cowork project per campaign. Each Cowork project gets its own session (per-project auth at `<project-dir>/.hhq-session.json`); default cap is 5 simultaneous sessions per licence. Users self-manage at `https://helperhq.co/sessions`.
 
 ## When this skill runs
 

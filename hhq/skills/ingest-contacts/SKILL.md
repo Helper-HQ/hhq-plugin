@@ -629,7 +629,7 @@ For LinkedIn Connections imports `review_count` should always be 0 (every row ha
 > - **`<unchanged>` already had** — nothing changed.
 > - *(if `review_count` > 0)* **`<review_count>` need your review** — rows that look similar to an existing contact (same name + company) but neither email nor LinkedIn URL confirmed it. I'll walk you through these when a review skill ships in a later patch.
 >
-> *(if a stage column was mapped)* **`<N>` of those landed in your active pipeline** at the stages you mapped. View: `https://hhq.ngrok.dev/pipeline`.
+> *(if a stage column was mapped)* **`<N>` of those landed in your active pipeline** at the stages you mapped. View: `https://helperhq.co/pipeline`.
 >
 > Total in your master now: **`<created + updated + unchanged>` from this file** (plus anything from earlier imports)."
 

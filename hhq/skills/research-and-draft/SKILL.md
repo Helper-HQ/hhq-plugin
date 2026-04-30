@@ -170,7 +170,7 @@ Use the same presentation format as Phase 5 in the normal flow. List all `<N>` o
 
 > "Done — `<N>` quick-start openers ready. When you've sent any, mark them `contacted` like usual.
 >
-> Pipeline view: `https://hhq.ngrok.dev/pipeline`
+> Pipeline view: `https://helperhq.co/pipeline`
 >
 > When your LinkedIn bulk export lands, drop the CSV in and I'll work through the rest of your network from there."
 
@@ -583,7 +583,7 @@ Notes file: <project-dir>/contacts/<slug>/notes.md
 
 > "When you've sent any of these, you can mark them `contacted` by saying 'mark Greg as contacted' — V1 doesn't track sends automatically, but the next surface skips anything in `drafted` for 30 days regardless.
 >
-> Pipeline view: `https://hhq.ngrok.dev/pipeline`
+> Pipeline view: `https://helperhq.co/pipeline`
 >
 > When you're ready for the next 5, just say 'get me the next 5'."
 

@@ -206,7 +206,7 @@ After a successful sync, give a brief summary:
 > - **`<updated>` updated** with fresh `last messaged` timestamps; *(if any stages advanced)* `<N>` of those moved to **In conversation** because the back-and-forth says you're actively talking.
 > - **`<skipped one-way>` newsletter / transactional senders skipped** — one-way correspondents only.
 >
-> Pipeline view: `https://hhq.ngrok.dev/pipeline`
+> Pipeline view: `https://helperhq.co/pipeline`
 >
 > Run this any time you want — say 'sync my gmail' or 'refresh from gmail'."
 

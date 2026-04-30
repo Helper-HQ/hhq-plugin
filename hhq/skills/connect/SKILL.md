@@ -50,7 +50,7 @@ Read `<project-dir>/.hhq-session.json`.
 
 > "Paste your Helper HQ licence key — it looks like `hhq_...` or `HHQ-...` and was emailed when you bought.
 >
-> Optional: what should I call this project? It shows up in your sessions list at hhq.ngrok.dev/sessions, so you can tell which one is which when you have a few. Skip if not sure."
+> Optional: what should I call this project? It shows up in your sessions list at helperhq.co/sessions, so you can tell which one is which when you have a few. Skip if not sure."
 
 Validate licence: starts with `hhq_` or `HHQ-`, length ≥ 16. Project label is optional, max 80 chars.
 
@@ -61,7 +61,7 @@ Generate a UUIDv4 as the session UUID (sent as `session_id` to the backend). On 
 POST to backend:
 
 ```
-POST https://hhq.ngrok.dev/api/activate
+POST https://helperhq.co/api/activate
 Content-Type: application/json
 
 {
@@ -87,7 +87,7 @@ Write `<project-dir>/.hhq-session.json`:
 
 ```json
 {
-  "backend_url": "https://hhq.ngrok.dev",
+  "backend_url": "https://helperhq.co",
   "license_key": "<the licence key>",
   "session_id": "<the UUID>",
   "jwt": "<token>",
@@ -102,7 +102,7 @@ Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh / 
 
 ## Phase 5 — List campaigns and pin
 
-`GET https://hhq.ngrok.dev/api/me/campaigns` with `Authorization: Bearer <jwt>`.
+`GET https://helperhq.co/api/me/campaigns` with `Authorization: Bearer <jwt>`.
 
 Three sub-cases:
 
