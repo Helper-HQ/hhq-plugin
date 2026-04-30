@@ -2,7 +2,7 @@
 
 A Claude Code / Cowork plugin family for solo founders, coaches, and consultants. The plugin prepares, you review and send.
 
-This repo is both the **plugin** (`hhq`) and the **`helper-hq` marketplace** that distributes it.
+This repo is both the **plugin** (`hhq`) and the **`hhq-plugin` marketplace** that distributes it.
 
 ## Status
 
@@ -13,8 +13,8 @@ This repo is both the **plugin** (`hhq`) and the **`helper-hq` marketplace** tha
 In Claude Code (CLI) or Cowork:
 
 ```
-/plugin marketplace add https://github.com/Helper-HQ/claude-plugin
-/plugin install hhq@helper-hq
+/plugin marketplace add https://github.com/Helper-HQ/hhq-plugin
+/plugin install hhq@hhq-plugin
 ```
 
 After install, run `/hhq:help` to see what the plugin does and what skills are available on your tier.
@@ -77,7 +77,7 @@ Run `/hhq:help` any time to list skills active on your tier and what's locked be
 
 When this repo gets new commits:
 
-- **Claude Code CLI:** run `/plugin marketplace update helper-hq` in any chat. Picks up the latest commit immediately.
+- **Claude Code CLI:** run `/plugin marketplace update hhq-plugin` in any chat. Picks up the latest commit immediately.
 - **Cowork:** there's no slash command for marketplace refresh in Cowork yet. The current workaround is to clear Cowork's plugin cache folder so the next chat re-pulls the marketplace, or uninstall + reinstall via the Customize menu.
 
 ## Roadmap
@@ -100,7 +100,7 @@ See [`hhq/README.md`](hhq/README.md) for plugin-level details (skills, storage l
 ## Repo layout
 
 ```
-helper-hq/claude-plugin/
+Helper-HQ/hhq-plugin/
 ├── .claude-plugin/
 │   └── marketplace.json          ← this marketplace
 ├── hhq/                          ← the plugin

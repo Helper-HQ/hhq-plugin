@@ -20,7 +20,7 @@ The plugin manifest name is `hhq`. Tier and helper entitlements are read from a 
 
 ## Getting started
 
-After installing the plugin (`/plugin install hhq@helper-hq`):
+After installing the plugin (`/plugin install hhq@hhq-plugin`):
 
 | You say | What runs |
 |---|---|
@@ -42,7 +42,7 @@ No weekly cadence. No automation. Run when you want more.
 
 ## Local development
 
-V1 is distributed via the `helper-hq` marketplace at https://github.com/Helper-HQ/claude-plugin.
+V1 is distributed via the `hhq-plugin` marketplace at https://github.com/Helper-HQ/hhq-plugin.
 
 ### Cowork
 
@@ -50,11 +50,11 @@ Edit a `SKILL.md` under `skills/<skill>/`, commit, push. There's no slash comman
 
 ### Claude Code CLI
 
-Edit, commit, push, then `/plugin marketplace update helper-hq`. Or for tighter iteration, install the plugin from a local path so edits hot-reload without a push:
+Edit, commit, push, then `/plugin marketplace update hhq-plugin`. Or for tighter iteration, install the plugin from a local path so edits hot-reload without a push:
 
 ```
-/plugin marketplace add C:\Code\HelperHQ\Claude-Plugin
-/plugin install hhq@helper-hq
+/plugin marketplace add C:\Code\HelperHQ\hhq-plugin
+/plugin install hhq@hhq-plugin
 /reload-plugins              # after each edit
 ```
 
@@ -107,8 +107,8 @@ No pipeline tab, no weekly log, no voice profile capture. See `memory/project_ba
 
 ## Architecture references
 
-- [`memory/project_product_reframe.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-Claude-Plugin/memory/project_product_reframe.md) — what the product actually is (signal-driven, not warm-network)
-- [`memory/project_v1_scope.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-Claude-Plugin/memory/project_v1_scope.md) — locked V1 scope
-- [`memory/project_plugin_architecture.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-Claude-Plugin/memory/project_plugin_architecture.md) — single HHQ plugin decision
-- [`memory/project_auth_architecture.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-Claude-Plugin/memory/project_auth_architecture.md) — signed token + hybrid skills
-- [`memory/project_backlog.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-Claude-Plugin/memory/project_backlog.md) — V2+ items
+- [`memory/project_product_reframe.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-hhq-plugin/memory/project_product_reframe.md) — what the product actually is (signal-driven, not warm-network)
+- [`memory/project_v1_scope.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-hhq-plugin/memory/project_v1_scope.md) — locked V1 scope
+- [`memory/project_plugin_architecture.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-hhq-plugin/memory/project_plugin_architecture.md) — single HHQ plugin decision
+- [`memory/project_auth_architecture.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-hhq-plugin/memory/project_auth_architecture.md) — signed token + hybrid skills
+- [`memory/project_backlog.md`](../../Users/Brad/.claude/projects/C--Code-HelperHQ-hhq-plugin/memory/project_backlog.md) — V2+ items
