@@ -1,14 +1,14 @@
 {
-  "name": "helper-hq",
+  "name": "hhq-plugin",
   "owner": {
-    "name": "Brad Younger",
-    "email": "brad@helperhq.co"
+    "name": "Helper HQ",
+    "email": "support@helper.co"
   },
   "plugins": [
     {
       "name": "hhq",
       "source": "./hhq",
-      "description": "Helper HQ — a family of AI-assisted helpers for solo founders, coaches, and consultants. V1 ships Sales Helper (prospect ranking + opener drafting from your LinkedIn network) plus Marketing Helper (deep ICP discovery and offer review walkthroughs). Human-in-the-loop by design — the plugin prepares, you review and send."
+      "description": "Start the conversations that turn into clients. Five tailored prospects a day from your LinkedIn network."
     }
   ]
 }
