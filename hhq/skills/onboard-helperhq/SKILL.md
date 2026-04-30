@@ -1,5 +1,5 @@
 ---
-name: onboard-user
+name: onboard-helperhq
 description: One-time setup for the Helper HQ Sales Helper plugin. TRIGGERS on phrases like "set up helper hq", "onboard me to helper hq", "set up sales helper", "start sales helper", "activate my helper hq licence", "activate my sales helper licence", "I have a helper hq licence key", "set me up for sales helper", "onboard me", "re-onboard", "reset my setup", "start over", or when the user explicitly invokes /hhq:onboard. Activates the user's licence against the Helper HQ backend, kicks off the LinkedIn export FIRST (Connections + Messages, because LinkedIn takes up to 24h), then runs a deeper conversation on the user's offer (one-sentence + hook + URLs read inline to distil an offer_profile), target prospect, up to 5 weighted ranking signals, and voice samples (brand guide as text/URL/PDF/DOCX, articles, LinkedIn message URLs — read inline to distil a voice_profile the user reviews and tunes). Optionally captures up to 5 LinkedIn profile URLs as a quick-start batch so the user can get openers drafted before the bulk LinkedIn export arrives. Saves to the backend via PUT /api/me/config. Run this BEFORE ingest-contacts, surface-next-5, or research-and-draft. For ongoing voice tuning AFTER onboarding, use tune-voice instead.
 ---
 
@@ -214,6 +214,25 @@ If they have any questions, answer briefly. When they confirm done, save `linked
 If they're hesitant about messages (privacy, legal, etc.), respect it — tell them to extract only `Connections.csv` from the zip when the time comes, skipping `messages.csv`. Save `linkedin_export.messages_requested: false`. The plugin works without messages; voice will improve more slowly without them.
 
 If they said no to the walkthrough entirely → save `linkedin_export.requested_at: null`. Tell them they can run `ingest-contacts` whenever they have CSVs ready, and continue with the rest of onboarding regardless — offer / ICP / signals are useful work either way.
+
+## Phase 2.4 — Pipeline shape (optional, before any import)
+
+Before importing existing contacts, give the user a one-time window to shape their pipeline so the import lands cleanly. Helper HQ ships seven default stages — Lead, Outreach sent, In conversation, Meeting booked, Proposal sent, Customer, Not a fit — that cover most B2B sales motions, but real users often have a different funnel.
+
+> "Quick gut-check on your pipeline shape before we import anything. Helper HQ's defaults are:
+>
+>   1. Lead → 2. Outreach sent → 3. In conversation → 4. Meeting booked → 5. Proposal sent → 6. Customer → 7. Not a fit
+>
+> Does that match how you actually sell, or do you want to map it onto your real stages first? You can rename, reorder, or add custom stages (Discovery Complete, Qualified, Negotiating, Paused, etc.).
+>
+>   • say 'looks fine' / 'defaults are good' — keep the seven defaults
+>   • say 'let me customise' / 'I want different stages' — I'll walk you through edits now
+>
+> (You can always edit later with `/hhq:remap-pipeline`, but doing it now means any pipeline import in the next step lands directly onto your real stages.)"
+
+**If 'customise':** Invoke `remap-pipeline` inline. It will GET the current stages, unlock if needed, walk through edits, and re-lock when the user says 'done'. When it returns, save `_pipeline_remapped: true` to skill memory and continue.
+
+**If 'looks fine' / skip:** Don't lock the pipeline yet — leave it unlocked through the rest of onboarding so Phase 2.5's ingest can still offer "adopt these CRM stages?" if the user drops a file. Phase 8 locks it at the end. Save `_pipeline_remapped: false` and continue.
 
 ## Phase 2.5 — Existing pipeline import (optional)
 
@@ -702,6 +721,19 @@ If either call fails:
 - **HTTP 5xx or network error** → tell the user the backend's not responding, suggest they retry in a moment. Keep the answers in conversation context so a retry can re-PUT.
 
 The `tier` field is set to `"lite"` for V1. Pro and Elite tiers will check this field at runtime to gate features when they ship.
+
+### Step 8.3 — Lock the pipeline shape
+
+Once both PUTs succeed, lock the pipeline so the seven defaults (plus any custom stages the user added in Phase 2.4 or via an ingest "adopt-stages" branch in Phase 2.5) stay structurally fixed from now on. Renames remain allowed any time; structural changes require an explicit `/hhq:remap-pipeline`.
+
+```
+POST <backend_url>/api/me/pipeline-stages/lock
+Authorization: Bearer <jwt>
+```
+
+Expected response: `{"pipeline_locked": true, "pipeline_locked_at": "<iso>"}`. If the call fails (5xx / network), don't block onboarding — log to skill memory as `_pipeline_lock_failed: true` and continue to the warm close. The user can re-run `/hhq:remap-pipeline` later, which will lock on completion.
+
+If `_pipeline_remapped` is `true` in skill memory, append a one-line confirmation to the warm close: "Pipeline locked at the shape you mapped — `<N>` stages."
 
 Do NOT write any other local files. The only local files are `<project-dir>/.hhq-session.json` (per-project session auth) and `<project-dir>/.hhq-campaign.json` (per-project campaign pin). Everything else lives backend-side.
 

@@ -22,7 +22,7 @@ If neither `<project-dir>/.hhq-session.json` nor legacy `<project-dir>/.hhq-auth
 
 Don't block the help listing — still show it. The note is just informational.
 
-If either exists, treat as "started" and skip the warning. The onboard-user skill itself handles half-finished setups.
+If either exists, treat as "started" and skip the warning. The onboard-helperhq skill itself handles half-finished setups.
 
 ## Render the directory
 
@@ -35,7 +35,7 @@ Use this exact shape.
 
 Active skills:
 
-• **onboard-user** — One-time first-time setup. Captures your offer + hook + URLs (read inline to build an offer profile), ICP, 5 weighted signals, and voice samples (brand guide, articles, LinkedIn message URLs — read inline to build a voice profile you review and tune); activates your licence on this project (one of 5 default session slots); kicks off your LinkedIn export (Connections + Messages). Triggers when you're new or say "set me up", "re-onboard", "start over".
+• **onboard-helperhq** — One-time first-time setup. Captures your offer + hook + URLs (read inline to build an offer profile), ICP, 5 weighted signals, and voice samples (brand guide, articles, LinkedIn message URLs — read inline to build a voice profile you review and tune); activates your licence on this project (one of 5 default session slots); kicks off your LinkedIn export (Connections + Messages). Triggers when you're new or say "set me up", "re-onboard", "start over".
 
 • **connect** — Already onboarded somewhere else? Connect this Cowork project to your account without re-doing the full setup. Paste your licence key, optionally name the project, pick which campaign to pin this project to (or create a new one). Each Cowork project gets its own session — manage your 5 active session slots at `https://helperhq.co/sessions`. Triggers on "connect", "connect this project", "I have a licence key, just connect", or `/hhq:connect`.
 
@@ -44,6 +44,8 @@ Active skills:
 • **sync-gmail** — Pulls your last 30 days of Gmail correspondents through Claude's Gmail connector, builds a per-correspondent digest from message headers (never bodies), and folds it into Helper HQ — refreshes "last messaged" data on contacts you already have, advances the ones you're actively emailing back and forth with to "In conversation" stage, and creates Lead-stage contacts for new bidirectional correspondents. Triggers on "sync my gmail", "pull my gmail contacts", "refresh from gmail", "ingest gmail".
 
 • **review-imports** — Walks you through pending fuzzy-match items in your import review queue — incoming contacts that look similar to ones you already have (same name + company) but neither email nor LinkedIn URL confirmed they're the same person. For each one: shows existing vs incoming side by side, you say merge / new / skip. Mostly populated by business card scans and CRM imports — LinkedIn-only users will rarely see anything in the queue. Triggers on "review my imports", "show review queue", "any contacts to review".
+
+• **remap-pipeline** — Edit your pipeline stages — rename, reorder, add custom stages, or delete custom stages. Use this when the seven Helper HQ defaults (Lead, Outreach sent, In conversation, Meeting booked, Proposal sent, Customer, Not a fit) don't match how you actually sell. Defaults can be renamed and reordered but never deleted (Gmail sync's stage-advance keys off them); custom stages get a `custom_<name>` slug and slot anywhere in the funnel. Pipeline locks after editing; rename stays open any time. Triggers on "remap my pipeline", "edit my pipeline stages", "add a stage", or `/hhq:remap-pipeline`.
 
 • **tune-voice** — Manage your voice profile after onboarding. View, edit do/dont/tone/phrases lists in plain language, add a new source (URL, paste, PDF, DOCX) and re-synthesise, or regenerate from scratch. Triggers on "tune my voice", "show my voice", "add this article to my voice", "regenerate my voice".
 

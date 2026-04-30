@@ -1,11 +1,11 @@
 ---
 name: icp-discovery
-description: Marketing Helper — guided ICP (ideal customer profile) discovery. Walks the user through a deeper definition of who their target prospect is for a campaign — industry, role, stage/size, geography, triggers, pain points, buying signals, disqualifiers, example clients — and synthesises a structured `icp_profile` plus the simpler `icp` fields used by Sales Helper. Use when the user says "discover my ICP", "define my ICP", "ICP discovery", "who's my ideal customer", "review my ICP", "redo my ICP", "let's nail down the target", or invokes /hhq:icp-discovery. Can be run standalone any time, or invoked from `onboard-user` Phase 4 when the user picks the "deep" option. Loads existing `icp` / `icp_profile` from the backend; if one exists, prompts the user before overwriting (V1 only stores ONE active ICP — multi-ICP per campaign is a V2 backlog item).
+description: Marketing Helper — guided ICP (ideal customer profile) discovery. Walks the user through a deeper definition of who their target prospect is for a campaign — industry, role, stage/size, geography, triggers, pain points, buying signals, disqualifiers, example clients — and synthesises a structured `icp_profile` plus the simpler `icp` fields used by Sales Helper. Use when the user says "discover my ICP", "define my ICP", "ICP discovery", "who's my ideal customer", "review my ICP", "redo my ICP", "let's nail down the target", or invokes /hhq:icp-discovery. Can be run standalone any time, or invoked from `onboard-helperhq` Phase 4 when the user picks the "deep" option. Loads existing `icp` / `icp_profile` from the backend; if one exists, prompts the user before overwriting (V1 only stores ONE active ICP — multi-ICP per campaign is a V2 backlog item).
 ---
 
 # ICP Discovery — Marketing Helper
 
-You are running a deeper guided walkthrough to define the user's ideal customer profile (ICP). This skill is the long-form counterpart to `onboard-user` Phase 4 — it asks more questions, captures more structure, and reads any URLs the user gives you to extract canonical language about who their best clients are.
+You are running a deeper guided walkthrough to define the user's ideal customer profile (ICP). This skill is the long-form counterpart to `onboard-helperhq` Phase 4 — it asks more questions, captures more structure, and reads any URLs the user gives you to extract canonical language about who their best clients are.
 
 The output feeds Sales Helper's prospect ranking (via the simple `icp` fields) and gives `research-and-draft` richer context to reference in openers (via `icp_profile`).
 
@@ -17,9 +17,9 @@ Trigger when the user says:
 - "discover my ICP", "define my ICP", "ICP discovery"
 - "who's my ideal customer", "let's nail down my target"
 - "review my ICP", "redo my ICP", "update my ICP"
-- "deep ICP" (from inside `onboard-user` Phase 4)
+- "deep ICP" (from inside `onboard-helperhq` Phase 4)
 
-Or when invoked inline from `onboard-user` Phase 4 ("deep" branch).
+Or when invoked inline from `onboard-helperhq` Phase 4 ("deep" branch).
 
 Do NOT trigger if `<project-dir>/.hhq-session.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `/hhq:connect` first.
 
@@ -96,7 +96,7 @@ If yes → continue.
 
 ## Phase 3 — Discovery walkthrough
 
-Conversational style — same rules as `onboard-user`:
+Conversational style — same rules as `onboard-helperhq`:
 
 - One question at a time. Adapt to their answers. **No yes/no gate between adjacent questions.**
 - **Do NOT echo saved answers back.** Brief acknowledgment ("Got it. Next, ...") and move on.
@@ -309,9 +309,9 @@ Expected HTTP 200. On 401, run auth fallback once and retry. On 5xx / network er
 
 > "ICP saved. Sales Helper will use this when it ranks your next batch of prospects. Run 'review my offer' next if you haven't already, or 'get me the next 5 prospects' to put it to work."
 
-**If invoked from inside `onboard-user`:**
+**If invoked from inside `onboard-helperhq`:**
 
-Return control to onboard-user without the close message. Onboard-user will close at Phase 8.
+Return control to onboard-helperhq without the close message. Onboard-user will close at Phase 8.
 
 ## Things you must NOT do
 

@@ -112,7 +112,7 @@ The user is licensed but never completed full onboarding (account has no campaig
 
 > "You're connected, but you don't have any campaigns set up yet. Run `/hhq:onboard` to do the first-time setup (offer, ICP, voice, signals). That'll create your default campaign and pin this project to it."
 
-Stop. Don't write `.hhq-campaign.json` — let `onboard-user` handle the pin.
+Stop. Don't write `.hhq-campaign.json` — let `onboard-helperhq` handle the pin.
 
 ### Sub-case B — Exactly one campaign
 

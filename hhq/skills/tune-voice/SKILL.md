@@ -1,13 +1,13 @@
 ---
 name: tune-voice
-description: Manage the user's voice profile after onboarding. Two modes — (a) base voice (default) acts on `voice_profile` at user level via `/api/me/config`; (b) campaign-additions mode acts on `voice_additions` for the current campaign via `/api/me/campaigns/{slug}/config`, additive on top of the base. Triggers — base mode on "tune my voice", "update my voice", "show my voice", "regenerate my voice"; campaign-additions mode on "tune this campaign's voice", "add to campaign voice", "tune voice for this campaign", or any phrase mentioning "this campaign" alongside voice. Both modes display the profile, then offer (1) view only; (2) edit do/dont/tone/phrases/summary directly; (3) add a new source (URL, paste, PDF/DOCX) and re-synthesise; (4) regenerate from scratch. Synthesis logic mirrors onboard-user Phase 6.
+description: Manage the user's voice profile after onboarding. Two modes — (a) base voice (default) acts on `voice_profile` at user level via `/api/me/config`; (b) campaign-additions mode acts on `voice_additions` for the current campaign via `/api/me/campaigns/{slug}/config`, additive on top of the base. Triggers — base mode on "tune my voice", "update my voice", "show my voice", "regenerate my voice"; campaign-additions mode on "tune this campaign's voice", "add to campaign voice", "tune voice for this campaign", or any phrase mentioning "this campaign" alongside voice. Both modes display the profile, then offer (1) view only; (2) edit do/dont/tone/phrases/summary directly; (3) add a new source (URL, paste, PDF/DOCX) and re-synthesise; (4) regenerate from scratch. Synthesis logic mirrors onboard-helperhq Phase 6.
 ---
 
 # Tune Voice — Sales Helper Lite
 
 You are managing the user's `voice_profile` outside the onboarding flow. This skill is for **ongoing** voice tuning — adding new samples, removing rules that aren't them, refining tone over time.
 
-The synthesis logic mirrors `onboard-user` Phase 6. Read that skill if you need a reference for the synthesis pass — they share the same shape and rules.
+The synthesis logic mirrors `onboard-helperhq` Phase 6. Read that skill if you need a reference for the synthesis pass — they share the same shape and rules.
 
 ## When this skill runs
 
@@ -220,7 +220,7 @@ In campaign mode, only the campaign's voice_additions are updated — the user's
 
 ## Things you must NOT do
 
-- Do NOT save raw source content (page text, PDF/DOCX content, message bodies) anywhere. Distil and forget — same rule as onboard-user Phase 6.
+- Do NOT save raw source content (page text, PDF/DOCX content, message bodies) anywhere. Distil and forget — same rule as onboard-helperhq Phase 6.
 - Do NOT save uploaded files to disk or backend. PDFs/DOCXs are read inline; the file itself is not persisted.
 - Do NOT touch other config fields. This skill only writes `voice_profile` (user mode) or `voice_additions` (campaign mode) — never both, never anything else.
 - Do NOT regenerate without confirming — manual edits are user work and shouldn't be silently overwritten.

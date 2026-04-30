@@ -1,6 +1,6 @@
 ---
 name: new-campaign
-description: Create a new outbound campaign in this project. Use when the user wants to run multiple campaigns from the same Helper HQ account — e.g. one for Sunburnt Space customers, another for Sunburnt Space investors, another for Helper HQ customers. Triggers on "new campaign", "start a new campaign", "this project is for a different campaign", "let's run a separate campaign for X". Pins the current Cowork project to the new campaign via `<project>/.hhq-campaign.json` so every subsequent skill (surface-next-5, research-and-draft, etc.) operates inside the new campaign's context. Each campaign holds its own offer / ICP / signals / batch / per-contact cooldown state — but contacts (the master network), the base voice profile, and the licence remain user-level. Optional per-campaign voice additions can layer on top of the base voice. Run AFTER onboard-user has completed at least once on this machine.
+description: Create a new outbound campaign in this project. Use when the user wants to run multiple campaigns from the same Helper HQ account — e.g. one for Sunburnt Space customers, another for Sunburnt Space investors, another for Helper HQ customers. Triggers on "new campaign", "start a new campaign", "this project is for a different campaign", "let's run a separate campaign for X". Pins the current Cowork project to the new campaign via `<project>/.hhq-campaign.json` so every subsequent skill (surface-next-5, research-and-draft, etc.) operates inside the new campaign's context. Each campaign holds its own offer / ICP / signals / batch / per-contact cooldown state — but contacts (the master network), the base voice profile, and the licence remain user-level. Optional per-campaign voice additions can layer on top of the base voice. Run AFTER onboard-helperhq has completed at least once on this machine.
 ---
 
 # New Campaign — Helper HQ
@@ -17,7 +17,7 @@ Trigger when:
 
 Do NOT trigger when:
 - The user is editing or refining their existing offer / ICP — that's `offer-review` and `icp-discovery` for the *current* campaign.
-- The user has not yet onboarded — route to `onboard-user` instead.
+- The user has not yet onboarded — route to `onboard-helperhq` instead.
 
 ## Phase 0 — Auth and prerequisites
 
@@ -122,7 +122,7 @@ Ask: *"What do you offer in this campaign? One sentence."* Save as `offer`.
 
 Then: *"What's the angle prospects are getting excited about right now? One or two sentences."* Save as `offer_hook`.
 
-Optionally URLs for `offer_profile` synthesis (same shape as onboard-user Phase 3c — distil into summary / key_benefits / objection_patterns / canonical_phrases). Skip if no URLs.
+Optionally URLs for `offer_profile` synthesis (same shape as onboard-helperhq Phase 3c — distil into summary / key_benefits / objection_patterns / canonical_phrases). Skip if no URLs.
 
 Hold the offer fields in memory; PUT happens in Phase 6.
 
@@ -136,7 +136,7 @@ Invoke `icp-discovery` inline. PUTs to `/api/me/campaigns/<slug>/config`.
 
 **If quick:**
 
-Ask the same minimal ICP shape as onboard-user Phase 4.1: *"Who's your ideal prospect? At minimum tell me an industry and a role. Add anything else that matters — company size, stage, geography."*
+Ask the same minimal ICP shape as onboard-helperhq Phase 4.1: *"Who's your ideal prospect? At minimum tell me an industry and a role. Add anything else that matters — company size, stage, geography."*
 
 Save `icp` object in memory.
 
@@ -154,7 +154,7 @@ Default to copying from the user's first existing campaign so they have somethin
 
 **If define:**
 
-Run a slimmed-down version of onboard-user Phase 5 (steps 5a–5d): open-ended description → propose 5 signals → user adjusts → propose ranking → user adjusts → normalise to weights summing to 1. Hold in memory.
+Run a slimmed-down version of onboard-helperhq Phase 5 (steps 5a–5d): open-ended description → propose 5 signals → user adjusts → propose ranking → user adjusts → normalise to weights summing to 1. Hold in memory.
 
 If the existing campaigns list returned only `default` and that campaign has no signals (e.g. user onboarded with only voice and skipped the signals walkthrough), force the "define" branch.
 

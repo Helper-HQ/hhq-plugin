@@ -1,6 +1,6 @@
 ---
 name: sync-gmail
-description: Pulls the user's recent Gmail correspondents (last 30 days) via Claude's Gmail MCP connector, builds a per-correspondent digest from message headers (From / To / Date — never bodies), and applies the v0.9 brief's two transitions: (1) existing contacts get last_messaged_at + message_count refreshed and a stage advance to "In conversation" if they're at Lead / Outreach sent / no stage and the correspondence is bidirectional; (2) brand-new bidirectional correspondents become Lead-stage contacts with source=gmail_messages so surface-next-5 picks them up. Triggers when the user says "sync my gmail", "pull my gmail contacts", "ingest gmail", "refresh from gmail", "update from gmail", or similar. Run AFTER onboard-user (which gates on the Gmail connector being installed). Never reads message bodies — only the From / To / Date headers, by code-discipline. The Gmail MCP connector exposes full thread access, so this is a soft privacy guarantee enforced in this skill, not a hard one enforced by OAuth scope. If the connector isn't loaded in the current session, halts and routes the user back to onboard-user.
+description: Pulls the user's recent Gmail correspondents (last 30 days) via Claude's Gmail MCP connector, builds a per-correspondent digest from message headers (From / To / Date — never bodies), and applies the v0.9 brief's two transitions: (1) existing contacts get last_messaged_at + message_count refreshed and a stage advance to "In conversation" if they're at any pre-conversation stage (Lead, Outreach sent, custom stages with order < in_conversation, or no stage) and the correspondence is bidirectional; (2) brand-new bidirectional correspondents become Lead-stage contacts with source=gmail_messages so surface-next-5 picks them up. Triggers when the user says "sync my gmail", "pull my gmail contacts", "ingest gmail", "refresh from gmail", "update from gmail", or similar. Run AFTER onboard-helperhq (which gates on the Gmail connector being installed). Never reads message bodies — only the From / To / Date headers, by code-discipline. The Gmail MCP connector exposes full thread access, so this is a soft privacy guarantee enforced in this skill, not a hard one enforced by OAuth scope. If the connector isn't loaded in the current session, halts and routes the user back to onboard-helperhq.
 ---
 
 # Sync Gmail — Sales Helper Lite
@@ -109,7 +109,7 @@ After walking all threads, the digest is a flat object keyed by lowercase email.
 
 You need three things from the backend before applying transitions:
 
-1. **Pipeline stage IDs** — `GET <backend_url>/api/me/pipeline-stages` → returns `{stages: [{id, slug, name, order}]}`. Cache the `lead`, `outreach_sent`, and `in_conversation` stage IDs by slug.
+1. **Pipeline stage IDs + orders** — `GET <backend_url>/api/me/pipeline-stages` → returns `{stages: [{id, slug, name, order, is_default}], pipeline_locked, pipeline_locked_at}`. Cache the `in_conversation` stage's `id` AND `order` by slug. Also build an `{id → order}` map across all stages — you'll use this to decide stage advance by funnel *position*, not slug, so custom stages inserted between Lead and In conversation also auto-advance correctly.
 2. **Existing contacts (matchable by email)** — `GET <backend_url>/api/me/contacts?per_page=500&page=1` (page through if `total > 500`). For each contact with a non-null `email`, build a lookup `{lowercase_email: {id, slug, pipeline_stage_id, last_messaged_at, message_count}}` so you can match Gmail correspondents to existing contacts in O(1).
 
 You don't need the heavy fields (research, notes, messages) for sync — the summary endpoint is enough.
@@ -124,7 +124,7 @@ If the correspondent's email matches an existing contact (by lowercased email):
 
 - **Update `last_messaged_at`** if the correspondent's `last_emailed_at` is newer than the existing contact's `last_messaged_at`. If the existing is null, set to the new value.
 - **Update `message_count`** to `existing.message_count + correspondent.message_count` (cumulative across syncs).
-- **Stage advance check**: if the existing contact's `pipeline_stage_id` is in {null, lead_stage_id, outreach_sent_stage_id} AND the correspondence is bidirectional (`initiated_by_user_count >= 1` AND `received_count >= 1`), advance to `in_conversation_stage_id`. Otherwise, leave the stage alone.
+- **Stage advance check** (order-based, so custom stages between Lead and In conversation also advance correctly): if the correspondence is bidirectional (`initiated_by_user_count >= 1` AND `received_count >= 1`) AND **either** the existing `pipeline_stage_id` is null **or** the existing stage's `order` is *strictly less than* `in_conversation`'s `order` AND the existing stage's slug is not `not_a_fit`, advance to `in_conversation_stage_id`. Otherwise, leave the stage alone. (Contacts already at or past In conversation, at any post-conversation stage like Meeting booked / Customer, or at the terminal `not_a_fit` stage are never auto-moved.)
 
 Build a payload row:
 
@@ -217,7 +217,7 @@ Compute `<skipped one-way>` as `<total digest size> - <total batch posted>`. If 
 - Do NOT read message bodies, subjects, snippets, or attachments. Headers only — From, To, Date.
 - Do NOT store any thread content locally or send any to the backend beyond what's listed in the row schemas.
 - Do NOT use the Gmail connector's `create_draft`, `create_label`, or any write tools. Read-only operation.
-- Do NOT advance a contact's stage past Lead/Outreach sent/null — never regress Customer, Meeting booked, Proposal sent, In conversation, or Not a fit.
+- Do NOT advance a contact whose current stage is at or past `in_conversation` (by `order`) — never regress In conversation, Meeting booked, Proposal sent, Customer, or any custom post-conversation stage. Never auto-move contacts at `not_a_fit` either; that's a terminal-by-intent stage.
 - Do NOT overwrite an existing contact's `source` to `gmail_messages` — preserve whatever it was (LinkedIn, business card, spreadsheet). Source tells us where the contact ORIGINATED, not the most recent touch.
 - Do NOT create non-bidirectional new contacts. One-way correspondents (newsletters, notifications) are noise — surfacing them dilutes the prospect ranking.
 - Do NOT ingest messages older than 30 days for contact creation. The brief's "active correspondent" window is 30 days hard.

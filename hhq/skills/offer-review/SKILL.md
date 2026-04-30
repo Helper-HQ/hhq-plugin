@@ -1,11 +1,11 @@
 ---
 name: offer-review
-description: Marketing Helper — guided offer review. Walks the user through a deeper definition of what they sell — one-sentence offer, hook/angle, outcomes, proof points, differentiation, pricing band, common objections, and source URLs read inline — and synthesises a structured `offer_profile` plus the simple `offer` and `offer_hook` fields used by Sales Helper. Use when the user says "review my offer", "offer review", "redo my offer", "update my offer", "let's nail down the offer", "offer discovery", "tighten my offer", or invokes /hhq:offer-review. Can be run standalone any time, or invoked from `onboard-user` Phase 3 when the user picks the "deep" option. Loads existing offer fields from the backend; if any exist, prompts the user before overwriting (V1 only stores ONE active offer — multi-offer per campaign is a V2 backlog item).
+description: Marketing Helper — guided offer review. Walks the user through a deeper definition of what they sell — one-sentence offer, hook/angle, outcomes, proof points, differentiation, pricing band, common objections, and source URLs read inline — and synthesises a structured `offer_profile` plus the simple `offer` and `offer_hook` fields used by Sales Helper. Use when the user says "review my offer", "offer review", "redo my offer", "update my offer", "let's nail down the offer", "offer discovery", "tighten my offer", or invokes /hhq:offer-review. Can be run standalone any time, or invoked from `onboard-helperhq` Phase 3 when the user picks the "deep" option. Loads existing offer fields from the backend; if any exist, prompts the user before overwriting (V1 only stores ONE active offer — multi-offer per campaign is a V2 backlog item).
 ---
 
 # Offer Review — Marketing Helper
 
-You are running a deeper guided walkthrough to dial in the user's offer. This skill is the long-form counterpart to `onboard-user` Phase 3 — it asks more questions, captures more structure (proof, differentiation, pricing band), and reads any URLs the user gives you to extract canonical language about what they sell.
+You are running a deeper guided walkthrough to dial in the user's offer. This skill is the long-form counterpart to `onboard-helperhq` Phase 3 — it asks more questions, captures more structure (proof, differentiation, pricing band), and reads any URLs the user gives you to extract canonical language about what they sell.
 
 The output feeds `research-and-draft` so openers can echo the user's own words back when referencing what they do.
 
@@ -17,9 +17,9 @@ Trigger when the user says:
 - "review my offer", "offer review", "tighten my offer"
 - "redo my offer", "update my offer"
 - "offer discovery", "let's nail down the offer", "deep offer"
-- "deep offer" (from inside `onboard-user` Phase 3)
+- "deep offer" (from inside `onboard-helperhq` Phase 3)
 
-Or when invoked inline from `onboard-user` Phase 3 ("deep" branch).
+Or when invoked inline from `onboard-helperhq` Phase 3 ("deep" branch).
 
 Do NOT trigger if `<project-dir>/.hhq-session.json` is missing (and no legacy `<project>/.hhq-auth.json` to migrate from) — route to `/hhq:connect` first.
 
@@ -98,7 +98,7 @@ If yes → continue.
 
 ## Phase 3 — Review walkthrough
 
-Conversational style (same as `onboard-user`):
+Conversational style (same as `onboard-helperhq`):
 
 - One question at a time. Adapt to their answers. **No yes/no gate between adjacent questions.**
 - **Do NOT echo saved answers back.** Brief acknowledgment ("Got it. Next, ...") and move on.
@@ -312,9 +312,9 @@ Expected HTTP 200. On 401, auth fallback once and retry. On 5xx / network error,
 
 > "Offer saved. The next opener I draft will reference your offer language — canonical phrases, key benefits, the hook. Run 'discover my ICP' next if you haven't already, or 'get me the next 5 prospects' to put it to work."
 
-**If invoked from inside `onboard-user`:**
+**If invoked from inside `onboard-helperhq`:**
 
-Return control to onboard-user without the close message. Onboard-user will close at Phase 8.
+Return control to onboard-helperhq without the close message. Onboard-user will close at Phase 8.
 
 ## Things you must NOT do
 

@@ -1,6 +1,6 @@
 ---
 name: ingest-contacts
-description: Imports the user's contacts into the Helper HQ backend from any of four file-based sources — (1) LinkedIn export Connections.csv + messages.csv, (2) generic spreadsheets (.xlsx, .csv, .xls) with arbitrary column layouts, (3) CRM exports from HubSpot, Salesforce, Pipedrive, etc., (4) business card scans (PDF or image — jpg, png, heic, webp — one or many cards per file). Detects file type and routes to the correct branch. For LinkedIn Connections.csv, parses + POSTs to /api/me/contacts/import (dedup by email → linkedin_url → fuzzy → create, returns created/updated/unchanged/review_count). For LinkedIn messages.csv, digests client-side into {linkedin_url, last_messaged_at, message_count} per conversation partner (message bodies NOT persisted) and POSTs to /api/me/messages/import. For spreadsheets/CRM exports, Claude maps the file's columns onto the contacts schema, asks the user to confirm the mapping, optionally maps stage labels onto Helper HQ pipeline stages, then POSTs with source=spreadsheet or crm_csv. For business card scans, fetches the server-controlled extract_business_card vision prompt from /api/mcp/prompts, runs a vision pass on the image/PDF returning a per-card array with status enum (ok/partial/no_individual_name/event_card/blank_or_back), routes flagged cards through user review or auto-skip per the brief, then POSTs ok/partial/company-as-contact rows with source=business_card. Triggers when the user drops a CSV, xlsx, PDF, or image in chat, says they've got their LinkedIn export, says "import my contacts", "import my spreadsheet", "I have a CRM export", "scan my cards", "import my business cards", "ingest from HubSpot/Salesforce/Pipedrive", or similar. Run AFTER onboard-user. If `.hhq-auth.json` does not exist in the project folder, route the user to onboard-user first.
+description: Imports the user's contacts into the Helper HQ backend from any of four file-based sources — (1) LinkedIn export Connections.csv + messages.csv, (2) generic spreadsheets (.xlsx, .csv, .xls) with arbitrary column layouts, (3) CRM exports from HubSpot, Salesforce, Pipedrive, etc., (4) business card scans (PDF or image — jpg, png, heic, webp — one or many cards per file). Detects file type and routes to the correct branch. For LinkedIn Connections.csv, parses + POSTs to /api/me/contacts/import (dedup by email → linkedin_url → fuzzy → create, returns created/updated/unchanged/review_count). For LinkedIn messages.csv, digests client-side into {linkedin_url, last_messaged_at, message_count} per conversation partner (message bodies NOT persisted) and POSTs to /api/me/messages/import. For spreadsheets/CRM exports, Claude maps the file's columns onto the contacts schema, asks the user to confirm the mapping, optionally maps stage labels onto Helper HQ pipeline stages, then POSTs with source=spreadsheet or crm_csv. For business card scans, fetches the server-controlled extract_business_card vision prompt from /api/mcp/prompts, runs a vision pass on the image/PDF returning a per-card array with status enum (ok/partial/no_individual_name/event_card/blank_or_back), routes flagged cards through user review or auto-skip per the brief, then POSTs ok/partial/company-as-contact rows with source=business_card. Triggers when the user drops a CSV, xlsx, PDF, or image in chat, says they've got their LinkedIn export, says "import my contacts", "import my spreadsheet", "I have a CRM export", "scan my cards", "import my business cards", "ingest from HubSpot/Salesforce/Pipedrive", or similar. Run AFTER onboard-helperhq. If `.hhq-auth.json` does not exist in the project folder, route the user to onboard-helperhq first.
 ---
 
 # Ingest Contacts — Sales Helper Lite
@@ -23,7 +23,7 @@ Trigger when the user:
 - Asks to "import my spreadsheet", "I have a CRM export", "ingest from HubSpot / Salesforce / Pipedrive", "import my customer list"
 - Asks to "scan my cards", "import my business cards", "I just got back from a conference, here are the cards"
 
-Do NOT trigger if the user is mid-onboarding (let `onboard-user` route into this skill inline) or asking general questions about the export process.
+Do NOT trigger if the user is mid-onboarding (let `onboard-helperhq` route into this skill inline) or asking general questions about the export process.
 
 ## Phase 0 — Auth
 
@@ -358,7 +358,52 @@ GET <backend_url>/api/me/pipeline-stages
 Authorization: Bearer <jwt>
 ```
 
-Response: `{ "stages": [{id, slug, name, order}, ...] }` — seven default stages: Lead, Outreach sent, In conversation, Meeting booked, Proposal sent, Customer, Not a fit.
+Response: `{ "stages": [{id, slug, name, order, is_default}, ...], "pipeline_locked": true|false, "pipeline_locked_at": "<iso>|null" }`. Seven default stages ship out of the box: Lead, Outreach sent, In conversation, Meeting booked, Proposal sent, Customer, Not a fit. The user may also have custom stages (slugs prefixed `custom_`) if they ran `/hhq:remap-pipeline` or onboard-helperhq's Phase 2.4.
+
+#### Branch — adopt these CRM stages as the user's pipeline?
+
+If `pipeline_locked` is `false` AND the file's distinct stage labels don't fit the existing stages cleanly (e.g. multiple labels would all map to "Lead", or several labels have no obvious default match), offer the user a one-time choice:
+
+> "Your file has these stages: `Prospecting`, `Qualified`, `Discovery Complete`, `Intent`, `Negotiating`, `Deposit Paid`, `Agreement Signed`, `Paused`, `Lost`.
+>
+> Two options:
+>
+>   • **Adopt these as your pipeline** — I'll rename the seven HHQ defaults to match, add custom stages where there isn't a default, and import your contacts straight onto your real stages.
+>   • **Map onto the seven defaults** — keep HHQ's defaults; I'll squash your stages onto them (some grouping, e.g. `Negotiating` → `Proposal sent`).
+>
+> Which? (adopt / map)"
+
+**If 'adopt':**
+
+Walk through each of the file's distinct stage labels and decide:
+
+1. If it matches a default stage's name closely (case-insensitive, fuzzy) → propose `PATCH /api/me/pipeline-stages/<id>` to rename the matching default to the user's label. The slug stays the same internally.
+2. If it doesn't match any default → propose adding it as a custom stage via `POST /api/me/pipeline-stages` with `name` set to the user's label. Place it in funnel order (between the closest defaults you can infer).
+
+Show the user the proposed pipeline shape, gate at 'go':
+
+> "Here's what your pipeline will look like:
+>
+>   1. Prospecting          (renamed from Lead)
+>   2. Qualified            (custom)
+>   3. Discovery Complete   (renamed from Outreach sent)
+>   4. In conversation      (default — kept; Gmail sync auto-advances here)
+>   5. Intent               (custom)
+>   6. Negotiating          (renamed from Proposal sent)
+>   7. Deposit Paid         (custom)
+>   8. Agreement Signed     (renamed from Customer)
+>   9. Paused               (custom)
+>  10. Lost                 (renamed from Not a fit)
+>
+> Apply this and import your contacts onto these stages? (go / adjust)"
+
+On 'go', execute the PATCHes and POSTs in order, then re-GET to confirm. Build the label-to-stage mapping for Step S5 from the resulting stage list.
+
+After the import in Step S6 succeeds, **do not lock the pipeline** — leave that to onboard-helperhq's Phase 8.3 if this is being invoked from there, or to a manual `POST /me/pipeline-stages/lock` if the user is running `ingest-contacts` standalone post-onboarding (rare — pipeline would normally be locked already in that case).
+
+**If 'map' (or `pipeline_locked == true`):**
+
+Skip the adopt branch. Continue with the existing label-to-default mapping below.
 
 Propose a label-to-stage mapping using sensible defaults:
 

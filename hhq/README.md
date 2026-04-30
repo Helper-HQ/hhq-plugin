@@ -24,7 +24,7 @@ After installing the plugin (`/plugin install hhq@hhq-plugin`):
 
 | You say | What runs |
 |---|---|
-| *"set me up"* | `onboard-user` — captures licence key, offer, ICP, signals; kicks off LinkedIn export |
+| *"set me up"* | `onboard-helperhq` — captures licence key, offer, ICP, signals; kicks off LinkedIn export |
 | *"I've got my LinkedIn export"* (or drop the CSV in chat) | `ingest-contacts` — uploads connections to backend |
 | *"get me the next 5 prospects"* | `surface-next-5` — ranks and presents 5 with reasoning |
 | *"let's go"* (after surfacing) | `research-and-draft` — researches each, drafts openers |
@@ -69,7 +69,7 @@ Edit, commit, push, then `/plugin marketplace update hhq-plugin`. Or for tighter
 
 | Skill | Triggers on... | Purpose |
 |---|---|---|
-| `onboard-user` | *"set me up"*, auto on first use | Activate licence; capture offer + ICP + 5 weighted signals; start LinkedIn export |
+| `onboard-helperhq` | *"set me up"*, auto on first use | Activate licence; capture offer + ICP + 5 weighted signals; start LinkedIn export |
 | `ingest-contacts` | *"I've got my export"*, CSV dropped in chat | Parse LinkedIn CSV, upload to backend |
 | `surface-next-5` | *"get me the next 5 prospects"* | Filter master list by signal weights → show 5 with reasoning |
 | `research-and-draft` | *"let's go"* (after surface) | Research each prospect via Chrome connector, draft Greg-style opener |

@@ -1,6 +1,6 @@
 ---
 name: research-and-draft
-description: Researches each prospect in the current batch and drafts a Greg-style opener for each — campaign-scoped. Resolves the active campaign from `<project-dir>/.hhq-campaign.json` (default `default`). Two entry points — (1) normal flow after surface-next-5 ("let's go", "draft them", etc.) reads `/api/me/campaigns/{slug}/current-batch`, (2) quick-start flow after onboard-user ("let's go on quick start", "research my 5") reads `config.quick_start.urls` from the user-level config and operates inside the `default` campaign (quick-start always runs in the default campaign in V1). Both paths use the Chrome connector to read each prospect's LinkedIn profile + recent posts, save per-campaign findings to `research` via PUT /api/me/campaigns/{slug}/contacts/{contactSlug}, draft a short signal-referenced opener using the user's base voice merged with any campaign voice_additions, append to per-campaign `messages`, set per-campaign status to `drafted`, then present all openers cleanly. Run AFTER surface-next-5 (normal) or AFTER onboard-user with quick-start URLs queued.
+description: Researches each prospect in the current batch and drafts a Greg-style opener for each — campaign-scoped. Resolves the active campaign from `<project-dir>/.hhq-campaign.json` (default `default`). Two entry points — (1) normal flow after surface-next-5 ("let's go", "draft them", etc.) reads `/api/me/campaigns/{slug}/current-batch`, (2) quick-start flow after onboard-helperhq ("let's go on quick start", "research my 5") reads `config.quick_start.urls` from the user-level config and operates inside the `default` campaign (quick-start always runs in the default campaign in V1). Both paths use the Chrome connector to read each prospect's LinkedIn profile + recent posts, save per-campaign findings to `research` via PUT /api/me/campaigns/{slug}/contacts/{contactSlug}, draft a short signal-referenced opener using the user's base voice merged with any campaign voice_additions, append to per-campaign `messages`, set per-campaign status to `drafted`, then present all openers cleanly. Run AFTER surface-next-5 (normal) or AFTER onboard-helperhq with quick-start URLs queued.
 ---
 
 # Research and Draft — Sales Helper Lite
@@ -11,7 +11,7 @@ This is the heaviest V1 skill and it's where the actual product value lives. Wor
 
 ## When this skill runs
 
-Two entry points: the **normal flow** (after `surface-next-5`) and the **quick-start flow** (after `onboard-user` Phase 7 captured up to 5 LinkedIn profile URLs the user wants to reach out to immediately).
+Two entry points: the **normal flow** (after `surface-next-5`) and the **quick-start flow** (after `onboard-helperhq` Phase 7 captured up to 5 LinkedIn profile URLs the user wants to reach out to immediately).
 
 ### Normal flow triggers
 
