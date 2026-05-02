@@ -53,6 +53,12 @@ Active skills:
 
 • **research-and-draft** — Researches each prospect via their LinkedIn profile + recent posts, drafts a Greg-style opener using your voice + offer profiles, saves research and message history to the backend. Two entry points: normal flow after surface-next-5 ("let's go", "draft them"), and quick-start flow after onboarding ("let's go on quick start", "research my 5") for the up-to-5 prospects you hand-picked.
 
+• **surface-followups** — Daily companion to surface-next-5: shows up to 10 people who actually need a reply (manual reminder due, ball in your court, stale your court, going cold). You pick one at a time — the skill live-reads the Gmail thread (bodies in context, never persisted), distils dated bullets, refreshes the rolling user-level dossier, drafts a reply in your voice referencing the conversation, then pushes the draft into Gmail as a reply-in-thread for your final pass and send. Snooze / mark-handled / skip per pick. Triggers on "follow-ups for today", "who's waiting on me", "let's do follow-ups", or `/hhq:followups`.
+
+• **log-touch** — Quick capture for offline interactions Gmail sync can't see — phone calls, meetings, in-person catch-ups, voicemails, SMS. Free-form: "log a call with Sarah — wants pricing for 50 seats, follow up Tuesday". Logs the touch, optionally sets a reminder for surface-followups to pick up, appends a bullet to her conversation notes, and bumps her last_contacted_at for outreach-counting types. Triggers on "log a call with X", "talked to X", or `/hhq:log-touch`.
+
+• **contact** — View and manage one contact's full record: rolling user-level dossier, recent conversation bullets across all your campaigns, recent manual touches, pipeline status per campaign. Edit conversationally — "change her role to VP", "add: prefers WhatsApp", "drop the bullet from April 15", "clear her dossier and start fresh". Bullets and dossier edits are auto-versioned. Triggers on "show me Sarah", "what do I know about Marcus", "edit Greg's profile", or `/hhq:contact <name>`.
+
 ═══ Marketing Helper ═══
 
 Active skills:
