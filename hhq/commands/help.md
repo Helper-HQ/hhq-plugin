@@ -59,6 +59,22 @@ Active skills:
 
 • **contact** — View and manage one contact's full record: rolling user-level dossier, recent conversation bullets across all your campaigns, recent manual touches, pipeline status per campaign. Edit conversationally — "change her role to VP", "add: prefers WhatsApp", "drop the bullet from April 15", "clear her dossier and start fresh". Bullets and dossier edits are auto-versioned. Triggers on "show me Sarah", "what do I know about Marcus", "edit Greg's profile", or `/hhq:contact <name>`.
 
+• **connect-gmail** — Finish the OAuth handshake for **extended Gmail access** (beta). Run this after you receive the "your access is approved" email. Drives the Google consent screen and verifies the connection landed. Required before Admin Helper inbox features. Pre-req: opt in during `/hhq:onboard` Phase 7.5 and wait for admin approval. Triggers on "connect my gmail to helper hq", "finish gmail connection", "my gmail access was approved", or `/hhq:connect-gmail`.
+
+═══ Admin Helper ═══
+
+*Requires extended Gmail access (beta opt-in via `/hhq:onboard` Phase 7.5 + `/hhq:connect-gmail`). Standard Gmail connector users see these skills listed but can't run them — the skills route you to the Connect Gmail flow if you try.*
+
+Active skills:
+
+• **setup-gmail-labels** — One-time setup of 5 default HHQ Gmail labels (To Do / Awaiting Reply / FYI / Notifications / Newsletters) on your Gmail account, namespaced under `HHQ/`. Creates the labels in Gmail, persists the mapping. Auto-runs after `/hhq:connect-gmail` succeeds. Re-run any time to rename or disable individual labels. Required before triage-inbox and the background auto-rules can apply anything. Triggers on "set up gmail labels", "configure my labels", or `/hhq:setup-gmail-labels`.
+
+• **triage-inbox** — Pulls your last 50 Gmail threads, AI-categorises into the 5 HHQ buckets (To Do stays in inbox; Awaiting Reply / FYI / Notifications / Newsletters get archived), presents the grouped list with sender context (prospects + customers flagged), and on one yes applies the labels + archives + marks read in bulk per the bucket settings. Most newsletters / notifications are auto-handled by the background sync (every 15 min), so triage usually focuses on the To Do / Awaiting Reply / FYI judgment cases. Default UX is fast (one approval to apply all). Falls back to a simpler 4-bucket flow if labels haven't been set up. Triggers on "triage my inbox", "clean up my inbox", "what needs my attention", or `/hhq:triage-inbox`.
+
+• **draft-reply** — Drafts a reply to one specific Gmail thread in your voice and pushes it to Gmail as a draft for you to review + send. Identify the thread by description ("Sarah's pricing email"), Gmail URL, or thread ID — the skill searches your inbox if you describe it. Reads the thread, uses the same voice profile Sales Helper uses, references the conversation specifically, surfaces placeholders if it needs facts you didn't give it. Helper HQ never sends — you open Gmail and click send when ready. Triggers on "draft a reply to X", "reply to Sarah's email", "let's reply to that", or `/hhq:draft-reply <reference>`.
+
+• **manage-followups** — Surfaces threads where you sent the last message N+ days ago and no one's replied (default 5 days, override with `/hhq:manage-followups 10`). Sorted oldest-first, capped at 30. Pick one at a time — the skill reads the thread, drafts a light low-pressure follow-up in your voice referencing what you previously said, pushes as a Gmail draft for you to review + send. Skip / next / stop per pick. Broader than Sales Helper's `/hhq:followups` — covers any inbox thread, not just sales pipeline contacts. Triggers on "what am I waiting on", "manage my followups", "who haven't I heard back from", "follow up on emails", or `/hhq:manage-followups`.
+
 ═══ Marketing Helper ═══
 
 Active skills:

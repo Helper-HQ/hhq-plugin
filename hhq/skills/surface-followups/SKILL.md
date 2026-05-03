@@ -47,15 +47,31 @@ All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log 
 
 Read `<project-dir>/.hhq-campaign.json` for `campaign_slug`. If missing, write `{"campaign_slug": "default"}` and use `default`.
 
-## Phase 0.5 — Connector check
+## Phase 0.5 — Pick the Gmail backend (Option Y soft fallback)
 
-Look at the tools available in your current session. If you can see ANY tools whose names map to Gmail operations — `search_threads`, `get_thread`, `create_draft` (typically prefixed with `mcp__<some-uuid>__`) — proceed. The Gmail connector is required for follow-ups (without it, you can't read threads or push drafts).
+There are two ways this skill can talk to Gmail for the per-pick read + draft push:
 
-If no Gmail tools are loaded, halt:
+1. **HHQ Gmail MCP (preferred)** — uses the user's HHQ-owned OAuth connection (extended Gmail access). Per-pick: `POST /api/mcp/gmail/list_threads` to find the conversation, `POST /api/mcp/gmail/get_thread` for full bodies, `POST /api/mcp/gmail/push_draft` for the draft. Faster, cleaner, scope-enforced privacy.
+2. **Cowork generic Gmail connector (fallback)** — uses Claude's built-in `search_threads`, `get_thread`, `create_draft` tools.
 
-> "I can't see the Gmail connector in this session. Install it in your Cowork/Claude.ai settings (Settings → Connectors → Gmail), start a new chat, and try again."
+Detection — call:
 
-The Chrome connector for LinkedIn is optional — only needed if any picked follow-up turns out to be a LinkedIn-DM thread. If it's missing when needed, fall back to copy-paste output for that pick.
+```
+GET <backend_url>/api/me/gmail/connection
+Authorization: Bearer <jwt>
+```
+
+Branch on the response:
+
+- **`{"connected": true, ...}`** → set `gmail_backend = "hhq"`. The HHQ Gmail MCP is available — use it for the per-pick steps in Phase 4.
+- **`{"connected": false}`** → set `gmail_backend = "cowork"`. Now check tool availability: look at the tools in your current session for any `search_threads` / `get_thread` / `create_draft` (typically prefixed with `mcp__<some-uuid>__`). If those exist, continue. If not, halt with:
+  > "I can't see the Gmail connector in this session, and you don't have extended Gmail access set up either. Two options:
+  >
+  > - Install the Gmail connector in your Cowork/Claude.ai settings, start a new chat, and try again.
+  > - Or run `/hhq:onboard` Phase 7.5 to opt into extended Gmail access — once approved, follow-ups runs through HHQ's own Gmail backend."
+- **Network error on the connection check** → assume `gmail_backend = "cowork"` and continue with the existing Cowork detection. Don't block follow-ups just because the backend is briefly unreachable.
+
+The Chrome connector for LinkedIn is optional — only needed if any picked follow-up turns out to be a LinkedIn-DM thread. If it's missing when needed, fall back to copy-paste output for that pick. (LinkedIn handling doesn't change between HHQ and Cowork paths — neither covers LinkedIn.)
 
 ## Phase 1 — Auto-refresh inbox
 
@@ -164,13 +180,44 @@ Use the contact's `email` and `linkedin_url`:
 
 ### Step 4b-Gmail — Live-read the Gmail thread
 
-Use `search_threads` with a query like `from:<contact.email> OR to:<contact.email> newer_than:90d`. Cap at the most recent 1-3 threads — usually one thread is the active conversation.
+Branch on `gmail_backend` from Phase 0.5.
 
-If multiple threads come back, pick the one with the most recent message date.
+#### HHQ path (`gmail_backend = "hhq"`)
 
-For the chosen thread, `get_thread` to fetch ALL messages. **You MUST capture the `thread_id` for the draft push in Step 4g.** Read full message bodies into your context for this step only.
+```
+POST <backend_url>/api/mcp/gmail/list_threads
+Authorization: Bearer <jwt>
+Content-Type: application/json
 
-If `search_threads` returns nothing, the contact's email may not match the Gmail account they actually correspond from. Tell the user:
+{
+  "query": "from:<contact.email> OR to:<contact.email> newer_than:90d",
+  "max_results": 3
+}
+```
+
+Pick the thread with the most recent `latest_date`. Capture its `thread_id`.
+
+Then fetch full bodies:
+
+```
+POST <backend_url>/api/mcp/gmail/get_thread
+
+{ "thread_id": "<id>" }
+```
+
+Returns the same Gmail thread shape (messages array with bodies in `payload.body.data`, base64url-encoded — decode + walk multipart parts as needed). Read into your context for this per-pick step only.
+
+#### Cowork path (`gmail_backend = "cowork"`)
+
+Use `search_threads` with a query like `from:<contact.email> OR to:<contact.email> newer_than:90d`. Cap at the most recent 1-3 threads.
+
+If multiple threads come back, pick the one with the most recent message date. For the chosen thread, `get_thread` to fetch ALL messages.
+
+#### Both paths
+
+**You MUST capture the `thread_id` for the draft push in Step 4g.** Read full message bodies into your context for this step only.
+
+If the search returns nothing (no Gmail thread with this email), the contact's email may not match the Gmail account they actually correspond from. Tell the user:
 
 > "Couldn't find an active Gmail thread with `<email>`. Either the conversation is on LinkedIn, or they email from a different address. Want to skip and move on, or paste their other email?"
 
@@ -275,7 +322,12 @@ When the user says "approve" (or after all edits resolved):
 
 3. **Save HHQ draft**: `PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/<contact_slug>/draft-message` with body `{"draft_message": "<the draft>"}`. This is the resume-after-walk-away copy.
 
-4. **Push to Gmail draft** (Gmail conversations only): use the connector's `create_draft` with the `thread_id` captured in Step 4b-Gmail so it threads correctly as a reply. Capture the returned draft id for confirmation.
+4. **Push to Gmail draft** (Gmail conversations only) — branch on `gmail_backend` from Phase 0.5:
+
+   - **HHQ path:** `POST <backend_url>/api/mcp/gmail/push_draft` with `{"thread_id": "<id>", "body": "<the draft>"}`. The backend constructs the RFC 2822 envelope (To/Subject/In-Reply-To headers) automatically from the thread's latest inbound message.
+   - **Cowork path:** use the connector's `create_draft` with the `thread_id` captured in Step 4b-Gmail so it threads correctly as a reply.
+
+   Either way: capture the returned draft id for confirmation.
 
 5. **For LinkedIn conversations**: skip Step 4 — there's no LinkedIn draft API. Instead, output the draft as copy-paste content with a brief instruction: "Copy this into the LinkedIn thread with `<contact name>` and send when ready."
 
