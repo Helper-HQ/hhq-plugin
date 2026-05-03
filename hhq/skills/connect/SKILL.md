@@ -11,6 +11,17 @@ This skill creates a new **session** on the user's licence — internally a new 
 
 **Architecture note (v0.11+).** Auth is per-project, not per-machine. The session file lives at `<project-dir>/.hhq-session.json` and only that one file. There is no `~/.hhq/`, no shared machine identity, no cross-project token. Cowork's sandbox model is the foundation, not the obstacle.
 
+## Resolve `<backend_url>` (do this first, before any backend call)
+
+Helper HQ ships with prod as the default. To point a dev/test session at the staging backend, the user sets `HHQ_BACKEND_URL` in the shell that launches Claude.
+
+Resolution rule:
+
+- Bash: `echo "${HHQ_BACKEND_URL:-https://helperhq.co}"` — that's the value.
+- PowerShell: `if ($env:HHQ_BACKEND_URL) { $env:HHQ_BACKEND_URL } else { 'https://helperhq.co' }`.
+
+Bind the result to `<backend_url>` for the rest of this skill. Use `<backend_url>` for every backend call below AND as the `backend_url` value persisted into `.hhq-session.json` in Phase 4. Never hardcode `https://helperhq.co` anywhere — it's the fallback, not a literal.
+
 ## When this skill runs
 
 Trigger on:
@@ -61,7 +72,7 @@ Generate a UUIDv4 as the session UUID (sent as `session_id` to the backend). On 
 POST to backend:
 
 ```
-POST https://helperhq.co/api/activate
+POST <backend_url>/api/activate
 Content-Type: application/json
 
 {
@@ -87,7 +98,7 @@ Write `<project-dir>/.hhq-session.json`:
 
 ```json
 {
-  "backend_url": "https://helperhq.co",
+  "backend_url": "<backend_url>",
   "license_key": "<the licence key>",
   "session_id": "<the UUID>",
   "jwt": "<token>",
@@ -102,7 +113,7 @@ Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh / 
 
 ## Phase 5 — List campaigns and pin
 
-`GET https://helperhq.co/api/me/campaigns` with `Authorization: Bearer <jwt>`.
+`GET <backend_url>/api/me/campaigns` with `Authorization: Bearer <jwt>`.
 
 Three sub-cases:
 
@@ -140,7 +151,9 @@ If the user says "new" → invoke `/hhq:new-campaign` inline.
 
 ## Phase 6 — Close
 
-> "Connected. This project is now using campaign `<slug>`. Say 'get me the next 5 prospects' to start surfacing, or 'I've got my LinkedIn export' if you have a CSV to import."
+> "Connected to `<backend_url>`. This project is now using campaign `<slug>`. Say 'get me the next 5 prospects' to start surfacing, or 'I've got my LinkedIn export' if you have a CSV to import."
+
+If `<backend_url>` is not the prod default (`https://helperhq.co`), the success line makes that visible — no extra UI needed.
 
 Stop.
 

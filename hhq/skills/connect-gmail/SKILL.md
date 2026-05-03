@@ -76,7 +76,7 @@ Stop.
 
 If `/access-request` returns `status: "none"`:
 
-> "You haven't submitted an extended Gmail access request yet. Run `/hhq:onboard` and opt in during the extended Gmail step (Phase 7.5), or ask support to walk you through it."
+> "You haven't submitted an extended Gmail access request yet. Run `/hhq:request-gmail-access` to submit one — or `/hhq:onboard` if you'd rather do full first-time setup."
 
 Stop.
 

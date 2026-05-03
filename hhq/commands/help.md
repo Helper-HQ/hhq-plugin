@@ -59,7 +59,9 @@ Active skills:
 
 • **contact** — View and manage one contact's full record: rolling user-level dossier, recent conversation bullets across all your campaigns, recent manual touches, pipeline status per campaign. Edit conversationally — "change her role to VP", "add: prefers WhatsApp", "drop the bullet from April 15", "clear her dossier and start fresh". Bullets and dossier edits are auto-versioned. Triggers on "show me Sarah", "what do I know about Marcus", "edit Greg's profile", or `/hhq:contact <name>`.
 
-• **connect-gmail** — Finish the OAuth handshake for **extended Gmail access** (beta). Run this after you receive the "your access is approved" email. Drives the Google consent screen and verifies the connection landed. Required before Admin Helper inbox features. Pre-req: opt in during `/hhq:onboard` Phase 7.5 and wait for admin approval. Triggers on "connect my gmail to helper hq", "finish gmail connection", "my gmail access was approved", or `/hhq:connect-gmail`.
+• **request-gmail-access** — Submit (or check) a request for **extended Gmail access** (beta) — the prerequisite for `/hhq:connect-gmail`. Standalone path so already-onboarded users don't need to re-run full onboarding just for this one step. Asks for the Gmail address, POSTs the request, tells you what happens next (admin reviews, you get an email when approved). Idempotent — checks current state first. Triggers on "request gmail access", "I need gmail access", "submit gmail request", or `/hhq:request-gmail-access`.
+
+• **connect-gmail** — Finish the OAuth handshake for **extended Gmail access** (beta). Run this after you receive the "your access is approved" email. Drives the Google consent screen and verifies the connection landed. Required before Admin Helper inbox features. Pre-req: submit a request via `/hhq:request-gmail-access` (or `/hhq:onboard` Phase 7.5) and wait for admin approval. Triggers on "connect my gmail to helper hq", "finish gmail connection", "my gmail access was approved", or `/hhq:connect-gmail`.
 
 ═══ Admin Helper ═══
 
