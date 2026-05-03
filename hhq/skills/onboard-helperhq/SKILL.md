@@ -17,6 +17,25 @@ Trigger when:
 - No `<project-dir>/.hhq-session.json` exists in the current Cowork project (and no legacy `<project-dir>/.hhq-auth.json` to migrate from) and the user is interacting with Helper HQ for the first time *in this project*, or
 - The user explicitly asks to re-onboard, reset, reconfigure, or "start over."
 
+## DEV ONLY — Skip to a specific phase
+
+If the user's first message includes the literal phrase **"skip to phase X"** or **"test phase X"** (where X is one of `0.5`, `1`, `2`, `2.4`, `2.5`, `3`, `3b`, `3c`, `4`, `5`, `6`, `7`, `7.5`, `8`), **jump directly to that phase** and skip everything before it. This is a dev-mode iteration affordance — it lets the developer test one phase at a time without sitting through the full ~15 minute onboarding each cycle.
+
+**Hard prerequisites that must already be in place** (the dev-seed-user artisan command sets these up):
+
+- `<project-dir>/.hhq-session.json` exists with a valid `jwt`, `backend_url`, `license_key`, `session_id`. If missing, halt with: *"No session file. Run `php artisan hhq:dev-seed-user --email=<your-email>` from the backend dir first."*
+- The backend is reachable. (Skill calls will surface their own errors if not.)
+
+**Behaviour when a skip-to phrase is detected:**
+
+1. Skip Phase 0 entirely. Trust the existing session file.
+2. Skip Phase 0.5 (Gmail connector check) unless the requested phase is `0.5` itself — most later phases work fine without the connector when iterating in dev.
+3. For phases that depend on prior-phase output (e.g. Phase 8 expects offer/voice/signals from Phases 3-6), use placeholder values or fetch what already exists from the backend via `GET /api/me/config` and `GET /api/me/campaigns/default/config`. Do NOT prompt the user for missing prereqs — surface the gap clearly: *"Skipping to Phase X but missing required field Y from prior phase. Either complete that phase first or stub the value via the backend API."*
+4. Run only the requested phase, then stop. Do not continue to subsequent phases.
+5. Acknowledge briefly at the start: *"Dev shortcut detected — running Phase X only."*
+
+**Production users will never type these phrases by accident.** Phrases like "skip to phase 7.5" don't appear in normal conversation. No additional opt-in is needed.
+
 If the user already onboarded somewhere else and just needs THIS project hooked up, route them to `/hhq:connect` instead — much faster, no offer/ICP/voice questions.
 
 If the user wants a *new campaign* (different offer / ICP from one already on their account), route them to `/hhq:new-campaign` instead.
@@ -613,6 +632,85 @@ If user pastes URLs but none are valid LinkedIn profile URLs → tell them hones
 Do NOT attempt research or drafting in this phase — just queue. The actual research happens when the user invokes `research-and-draft` with a quick-start trigger phrase (handled in that skill).
 
 Move directly into Phase 8. **No yes/no gate.**
+
+## Phase 7.5 — Extended Gmail access (optional opt-in, beta)
+
+Helper HQ has two ways to talk to Gmail:
+
+- **Standard (default for everyone):** Sales Helper uses Claude's built-in Gmail connector you already wired up in Phase 0.5. Works today, no extra setup. Covers cold outreach, follow-up drafts, sync-gmail.
+- **Extended (this opt-in):** Direct, private OAuth between the user and Google via Helper HQ's own OAuth app. Required for Admin Helper inbox-management features (triage, archive, label, trash, draft replies) when they ship. Optional for Sales Helper today — same skills work either way.
+
+This phase asks if the user wants extended access, and if so, captures their Gmail address into our admin queue. We do **not** drive the OAuth flow here — that happens later via `/hhq:connect-gmail` after the admin approves them and emails the go-ahead.
+
+### Step 7.5a — Check current state
+
+```
+GET <backend_url>/api/me/gmail/access-request
+```
+
+The response shape is one of:
+
+- `{"status": "none"}` — never asked. Run the question below.
+- `{"status": "pending", "gmail_address": "...", "requested_at": "..."}` — already in the queue. Tell the user briefly: "Your extended Gmail access request for `<addr>` is still being reviewed (submitted `<date>`). We'll email you when it's approved." Skip to Phase 8.
+- `{"status": "approved", "gmail_address": "...", "approved_at": "..."}` — approved, just needs OAuth. Tell them: "Your extended Gmail access for `<addr>` is approved! Run `/hhq:connect-gmail` after we wrap up to finish the connection." Skip to Phase 8.
+- `{"status": "rejected", "gmail_address": "...", "rejected_reason": "..."}` — previously rejected. Surface the reason and offer to try again with a different address. If they say yes, treat it as the "none" path below. If no, skip to Phase 8.
+
+### Step 7.5b — The question (when status is "none")
+
+Tell them this verbatim:
+
+> "Quick optional step — extended Gmail features.
+>
+> Sales Helper works on the standard Gmail connector you already set up. There's a separate, private OAuth path between you and Google through Helper HQ — required for the upcoming **Admin Helper** (inbox triage, archive, label, draft replies). It also gives Sales Helper a tighter privacy story.
+>
+> **Beta caveats while we're going through Google's app verification (4–8 weeks):**
+> - You need to be manually approved on our side first — we add your Gmail address to Google's allow-list, then email you. Typically within 1 working day.
+> - Google requires a one-click re-auth every 7 days. Goes away once verification clears.
+> - Capped at 100 beta users — only opt in if you actually want Admin Helper.
+>
+> Want extended Gmail access? (yes / no — no = standard Sales Helper, no friction)"
+
+### Step 7.5c — If yes
+
+Ask:
+
+> "Which Gmail address do you want to connect? Use the actual Gmail account, not an alias."
+
+Validate it looks like a syntactically reasonable email. Then POST:
+
+```
+POST <backend_url>/api/me/gmail/access-request
+Content-Type: application/json
+Authorization: Bearer <jwt>
+
+{
+  "gmail_address": "<the address>"
+}
+```
+
+Expected response: `201` with `{"status": "pending", ...}`.
+
+If `409 already_pending` or `409 already_approved` comes back (race against another session), treat it as "we caught up" — tell the user the request is already in the system and continue.
+
+Tell the user:
+
+> "Got it — submitted. You'll get an email at `<the address they gave>` when we've added you to Google's allow-list (usually within a working day). When the email lands, run `/hhq:connect-gmail` in this project to finish the connection. Continuing onboarding now."
+
+Continue to Phase 8.
+
+### Step 7.5d — If no
+
+Acknowledge briefly and continue:
+
+> "Skipping. Standard Sales Helper is fully functional. You can opt in any time later by re-running this onboarding."
+
+Continue to Phase 8.
+
+### Things you must NOT do in Phase 7.5
+
+- Do NOT drive the OAuth flow here. That's `/hhq:connect-gmail`'s job, post-approval.
+- Do NOT block onboarding completion on the request being approved. The whole flow is async — onboarding always finishes regardless.
+- Do NOT pitch extended access as the better/default path. The standard Cowork connector is the right choice for most beta users.
 
 ## Phase 8 — Save and finish
 

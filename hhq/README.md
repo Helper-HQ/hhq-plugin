@@ -73,12 +73,18 @@ Edit, commit, push, then `/plugin marketplace update hhq-plugin`. Or for tighter
 | `ingest-contacts` | *"I've got my export"*, CSV dropped in chat | Parse LinkedIn CSV, upload to backend |
 | `surface-next-5` | *"get me the next 5 prospects"* | Filter master list by signal weights → show 5 with reasoning |
 | `research-and-draft` | *"let's go"* (after surface) | Research each prospect via Chrome connector, draft Greg-style opener |
+| `surface-followups` | *"who's waiting on me"*, *"follow-ups for today"* | Auto-syncs Gmail, ranks the queue (manual reminder due / ball-in-court / stale / cold), then per pick: live-read thread, distil bullets, regen dossier, draft reply, push to Gmail |
+| `log-touch` | *"log a call with X"*, *"talked to X"* | Capture an offline interaction (call/meeting/event/voicemail/sms) — feeds the dossier and optional follow-up reminder |
+| `contact` | *"show me Sarah"*, *"edit Greg's profile"* | View one contact's full record — dossier, bullets, touches, pipeline; conversational edits to dossier and bullets |
 
-Plus one slash command:
+Plus slash commands:
 
 | Command | Purpose |
 |---|---|
 | `/hhq:help` | List skills the user's token entitles them to, with one-line descriptions |
+| `/hhq:followups` | Run the daily follow-ups loop |
+| `/hhq:log-touch` | Quick-log a phone call / meeting / offline interaction |
+| `/hhq:contact <name>` | Show and curate one contact's full record |
 
 ## Storage (V1, v0.10+)
 

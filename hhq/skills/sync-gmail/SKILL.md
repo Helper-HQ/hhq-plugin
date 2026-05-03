@@ -50,17 +50,33 @@ If `jwt_expires_at` is past or within 60s of expiry:
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
 
-## Phase 0.5 — Connector check
+## Phase 0.5 — Pick the Gmail backend (Option Y soft fallback)
 
-Look at the tools available in your current session. If you can see ANY tools whose names map to Gmail operations — `search_threads`, `get_thread`, `list_drafts`, `list_labels`, `create_draft`, `create_label` (typically prefixed with `mcp__<some-uuid>__` in the function list) — proceed.
+There are two ways this skill can talk to Gmail:
 
-If no Gmail tools are loaded, halt:
+1. **HHQ Gmail MCP (preferred)** — uses the user's HHQ-owned OAuth connection (extended Gmail access). Single backend call (`POST /api/mcp/gmail/sync_correspondents`) returns the full correspondent digest server-side. Faster, cleaner, scope-enforced privacy.
+2. **Cowork generic Gmail connector (fallback)** — uses Claude's built-in Gmail tools (`search_threads`, `get_thread`, etc.). Requires the user to have installed the connector in their Cowork/Claude.ai settings. Phase 1-3 build the digest client-side.
 
-> "I can't see the Gmail connector in this session. Install it in your Cowork/Claude.ai settings (Settings → Connectors → Gmail), start a new chat, and run 'sync my gmail' again."
+Detection — call:
 
-Stop. Do NOT attempt any of the work below without the connector.
+```
+GET <backend_url>/api/me/gmail/connection
+Authorization: Bearer <jwt>
+```
 
-## Phase 1 — Resolve the user's Gmail address
+Branch on the response:
+
+- **`{"connected": true, ...}`** → set `gmail_backend = "hhq"`. The HHQ Gmail MCP is available — skip Phase 1-3 entirely and use the HHQ short-circuit in Phase 3.5 below. **Don't bother checking for Cowork tools** — even if both are present, HHQ wins (Option Y rule).
+- **`{"connected": false}`** → set `gmail_backend = "cowork"`. Fall back to the Cowork connector. Now check tool availability: look at the tools in your current session for any `search_threads` / `get_thread` / etc. (typically prefixed with `mcp__<some-uuid>__`). If those exist, continue with Phase 1-3 as written. If not, halt with:
+  > "I can't see the Gmail connector in this session, and you don't have extended Gmail access set up either. Two options:
+  >
+  > - Install the Gmail connector in your Cowork/Claude.ai settings (Settings → Connectors → Gmail), start a new chat, and run 'sync my gmail' again.
+  > - Or run `/hhq:onboard` Phase 7.5 to opt into extended Gmail access — Helper HQ's own OAuth path. Once approved (typically a working day), you won't need Cowork's connector for sync."
+- **Network error on the connection check** → assume `gmail_backend = "cowork"` and continue with the existing Cowork detection. Don't block sync just because the backend is briefly unreachable.
+
+## Phase 1 — Resolve the user's Gmail address (Cowork path only)
+
+**Skip this phase if `gmail_backend = "hhq"` from Phase 0.5.** Jump to Phase 3.5.
 
 We need the user's own email address to know which side of each message is "us" vs "them." The MCP connector doesn't expose a direct profile lookup, so derive it from any sent message:
 
@@ -75,13 +91,17 @@ If the user has zero sent messages (very new Gmail account), ask them directly:
 
 Validate the answer is a syntactically reasonable email; cache it.
 
-## Phase 2 — Search for recent threads
+## Phase 2 — Search for recent threads (Cowork path only)
+
+**Skip this phase if `gmail_backend = "hhq"`.** Jump to Phase 3.5.
 
 Use `search_threads` with a query like `newer_than:30d` to pull threads from the last 30 days. Cap at ~200 threads — the brief's "active correspondent" definition is about *recent* activity, and 200 is plenty of signal for a 30-day window.
 
 If the search returns more than 200 threads, take the first 200 (the connector typically returns most-recent first).
 
-## Phase 3 — Build the per-correspondent digest
+## Phase 3 — Build the per-correspondent digest (Cowork path only)
+
+**Skip this phase if `gmail_backend = "hhq"`.** Jump to Phase 3.5.
 
 For each thread:
 
@@ -104,6 +124,45 @@ For each thread:
 After walking all threads, the digest is a flat object keyed by lowercase email.
 
 **DO NOT** include any thread subjects, snippets, or bodies in the digest. Privacy invariant.
+
+## Phase 3.5 — HHQ short-circuit (HHQ path only)
+
+**Skip this phase if `gmail_backend = "cowork"`.**
+
+If you got here from Phase 0.5 with `gmail_backend = "hhq"`, the entire Phase 1-3 work happens server-side in a single call. Hit the HHQ Gmail MCP:
+
+```
+POST <backend_url>/api/mcp/gmail/sync_correspondents
+Authorization: Bearer <jwt>
+Content-Type: application/json
+
+{ "window_days": 30 }
+```
+
+Response shape (matches what Phase 3 would have built locally):
+
+```json
+{
+  "user_email": "brad@example.com",
+  "window_days": 30,
+  "thread_count": 87,
+  "correspondents": {
+    "greg@magnetorquer.com": {
+      "email": "Greg@Magnetorquer.com",
+      "display_name": "Greg Cole",
+      "last_emailed_at": "2026-04-29T...",
+      "message_count": 4,
+      "initiated_by_user_count": 2,
+      "received_count": 2
+    },
+    ...
+  }
+}
+```
+
+Use `correspondents` as your digest. Cache `user_email` for any later use. Continue to Phase 4 — the rest of the skill is identical regardless of which backend produced the digest.
+
+**Why this is faster:** the HHQ MCP server is doing 1 list call + N metadata calls in PHP, hitting Gmail with a fresh access token, and returning a complete digest. Saves N+1 round-trips through the Cowork connector. Also enforces the header-only privacy contract by API contract (the endpoint NEVER returns body content), not by skill discipline.
 
 ## Phase 4 — Fetch context from the backend
 
