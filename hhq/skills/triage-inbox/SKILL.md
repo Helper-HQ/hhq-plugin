@@ -124,6 +124,17 @@ If `threads` is empty, tell the user "Nothing in your inbox to triage — all cl
 
 **Note whether there's more:** if `next_page_token` is non-null, there are more than 50 threads waiting. Remember this for the Phase 6 summary so you can prompt the user to run triage again.
 
+### Trust the API. Do not filter the returned threads.
+
+`list_inbox` already filtered server-side to threads in the user's inbox. Every thread it returned **MUST be classified** in Phase 3. Do NOT secondarily filter on:
+
+- Whether `INBOX` is present in `label_ids` (the API has already confirmed inbox membership; some threads in the inbox view legitimately lack the literal `INBOX` system label depending on Gmail's category routing — checking for it will silently drop real threads).
+- Whether `UNREAD` is present.
+- Thread age, sender, subject, or any other criterion.
+- Whether the thread looks "boring".
+
+If your classified count in Phase 3 is less than `count(threads)` from this Phase 1 response, you've made a mistake — re-include the dropped threads and classify them. Categorising into `fyi` (read once, no action) is always a safe default for anything that doesn't fit elsewhere; dropping a thread silently is never the right call.
+
 ## Phase 2 — Look up senders against contacts
 
 For each thread, parse the sender email out of the `from` field (e.g. `Sarah Khan <sarah@acme.com>` → `sarah@acme.com`). Then for the unique senders, batch-look-up against the user's contacts:
@@ -163,11 +174,13 @@ Track which rule fired for which thread so the Phase 5 summary can show "(rule: 
 
 ### Pass B — Pre-classification override: Awaiting Reply → To Do on inbound
 
-Before falling through to AI, check if the thread is currently labelled `awaiting_reply` (the user's `gmail_label_id` for that bucket from `/api/me/gmail/labels/config`) AND there is a new inbound message — i.e. the thread is back in `INBOX` (the `INBOX` label is present in `label_ids`, which only happens when Gmail re-delivers a thread on a new reply) — then classify as `to_do` regardless of subject/snippet patterns. The other party has replied; the ball is back in the user's court.
+Before falling through to AI, check if the thread is currently labelled `awaiting_reply` (the user's `gmail_label_id` for that bucket from `/api/me/gmail/labels/config`). The fact that an `awaiting_reply` thread appeared in `list_inbox` results at all is the signal: an `awaiting_reply` thread is normally archived, so re-appearance in the inbox means Gmail re-delivered it on a new inbound. Classify as `to_do` regardless of subject/snippet patterns. The other party has replied; the ball is back in the user's court.
 
-In Phase 5, this means *removing* the `awaiting_reply` label and *adding* `to_do` (plus *adding* `INBOX` is implicit — the thread's already there). Skip the `archive_on_apply` for `to_do` (it stays in inbox by design).
+In Phase 5, this means *removing* the `awaiting_reply` label and *adding* `to_do`. Skip the `archive_on_apply` for `to_do` (it stays in inbox by design).
 
-If the thread is `awaiting_reply` but NOT in `INBOX` (i.e. nothing new has come in), leave it alone — don't reclassify, don't surface it in the triage list. It's correctly archived and waiting.
+(Threads labelled `awaiting_reply` that are NOT in the inbox simply won't appear in `list_inbox` results, so you'll never see them here — they're correctly archived and waiting.)
+
+**Do not check for `INBOX` in `label_ids` to confirm "in inbox".** The API return is the truth; some inbox threads don't carry the literal `INBOX` system label.
 
 ### Pass C — AI classification (only for unmatched threads)
 
@@ -214,6 +227,16 @@ If the background sync has been running, by the time the user runs triage:
 - The inbox you're triaging is mostly **human-sent emails needing judgment** — exactly the cases that need AI categorisation
 
 So in practice the `notifications` and `newsletters` buckets in triage will be small or empty for users with the auto-rules running. That's the intended behaviour.
+
+### Coverage check (mandatory before moving to Phase 4)
+
+Before rendering the bucket list in Phase 4, verify:
+
+```
+total classified across all 5 buckets == count(threads from Phase 1)
+```
+
+If this assertion fails, you have dropped one or more threads. Re-classify the missing ones (default to `fyi` if you genuinely cannot decide) so the totals match. Do NOT proceed to Phase 4 with a short count. Filtering threads out at any point in Phase 3 is a bug, not a feature — the only valid outcomes are "every thread classified" or "halt and tell the user something went wrong".
 
 ## Phase 4 — Present the categorised list
 
@@ -361,6 +384,7 @@ This is the pre-v0.21 behaviour. It works without label setup but loses the auto
 ## Things you must NOT do
 
 - Do NOT call `get_thread` during triage. Triage is metadata-only — bodies are read in `draft-reply` or `surface-followups` per pick. Privacy contract from v0.13.
+- Do NOT secondary-filter the threads returned by `list_inbox`. The API has already filtered server-side; every returned thread MUST be classified. Do not drop threads based on missing `INBOX` in `label_ids`, missing `UNREAD`, age, sender, or "looks boring". See the Phase 1 "Trust the API" rule and the Phase 3 coverage check — they back each other up. If your classified count is short of what `list_inbox` returned, you've made a mistake.
 - Do NOT permanently delete anything. The skill uses `archive_thread` (removes INBOX label only) and the optional `trash_thread` (Gmail soft-trash, 30-day recovery). The MCP doesn't expose permanent delete and never will.
 - Do NOT apply category labels in Phase 5 to the `action_required` or `waiting_on_reply` buckets. The point of those buckets is "stays visible in inbox unchanged" — labelling them adds clutter.
 - Do NOT loop the user through one-by-one approval in Phase 4 by default. Default UX is "approve all" — fast. Only enter per-item edit mode when the user explicitly asks ("edit", "let me change some").
