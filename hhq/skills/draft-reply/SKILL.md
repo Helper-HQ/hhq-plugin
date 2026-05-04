@@ -191,9 +191,25 @@ Notes:
 }
 ```
 
-Response includes the draft ID and the message it was attached to. On success:
+Response includes the draft ID and the message it was attached to.
+
+#### Auto-relabel: To Do → Awaiting Reply
+
+Once the draft is pushed, check whether the thread carries the user's `to_do` label. The thread's `label_ids` came back in `list_inbox` (if you searched there in Phase 1) or you can read them via `get_thread`'s `messages[].labelIds` (top-level on the thread itself isn't always populated — fall back to the latest message's labels).
+
+If the thread is currently labelled `to_do` (i.e. its label_ids include the user's `to_do` `gmail_label_id` from `/api/me/gmail/labels/config`), then:
+
+1. `POST /api/mcp/gmail/unlabel_thread` with the `to_do` `gmail_label_id`.
+2. `POST /api/mcp/gmail/label_thread` with the `awaiting_reply` `gmail_label_id`.
+3. If the `awaiting_reply` entry has `archive_on_apply: true`, also `POST /api/mcp/gmail/archive_thread` so it leaves the inbox.
+
+Skip the relabel if either label isn't set up (entry missing from `/api/me/gmail/labels/config`), the thread isn't currently `to_do`, or the user explicitly said "leave the labels alone" during edit. Don't surface label setup errors to the user — the draft was the primary action and it succeeded.
+
+#### Confirm to user
 
 > "Draft pushed to Gmail — open the thread in Gmail to review and send.
+>
+> *Moved from To Do to Awaiting Reply.* (only if the relabel actually ran)
 >
 > Reminder: Helper HQ never sends on your behalf. The draft is sitting in your Drafts folder, threaded with the original conversation. Click send when you're ready."
 
