@@ -24,6 +24,21 @@ Trigger on:
 
 Don't trigger on generic "check email" — only on explicit triage / cleanup intent.
 
+### Autonomous mode (scheduled routines)
+
+If the invocation prompt contains the word `auto`, `autonomous`, or `--auto`, OR the prompt clearly comes from a Cowork scheduled routine (e.g. "scheduled triage run", "routine triage"), enter **autonomous mode**:
+
+- **Skip Phase 4's approval gate.** Apply all proposed actions immediately after classification.
+- **Don't ask follow-up questions.** No "edit / cancel" prompt, no per-thread review.
+- **Don't try to capture new rules conversationally.** Rule capture (Phase 5 "Capture rules conversationally") is interactive-only — there's no user to confirm. Existing user-taught rules from Step 0e DO still apply (Pass A in Phase 3); the routine just can't learn new ones.
+- **Phase 6 still runs** — report what was done, including any errors. The user reads the summary when they next see the chat.
+- **Empty inbox** → exit silently (no "all clear" noise on a routine).
+- **Auth or Gmail-connection failure** → log a one-line note ("triage routine skipped — Gmail not connected"), don't halt loudly.
+
+The justification: label changes are reversible (the user can drop a label in Gmail in two clicks), so the cost of a wrong call is low. Manual invocation still gates on approval — autonomous mode is opt-in via the routine, not the default.
+
+If neither autonomous keyword nor routine context is present, run the standard interactive flow with the Phase 4 approval gate.
+
 ## Architecture note — labels do most of the work
 
 This skill assumes the user has run `/hhq:setup-gmail-labels` (auto-chained from `/hhq:connect-gmail`). The 5 HHQ labels (To Do / Awaiting Reply / FYI / Notifications / Newsletters) are the targets for triage classification.
@@ -65,6 +80,14 @@ This skill **does not work** with Cowork's generic Gmail connector — that conn
   - If user says "use legacy", drop into the **Legacy fallback** flow at the bottom of this skill.
   - If user says "yes", trigger the `setup-gmail-labels` skill, then resume here.
 
+### Step 0e — Load triage rules + custom labels
+
+`GET <backend_url>/api/me/triage-rules` → array of user-taught rules, already sorted by priority desc / id asc. Cache as `<rules>`. Empty array is fine (most users start with no rules).
+
+`GET <backend_url>/api/me/gmail/labels/custom` → user's custom labels (anything beyond the 5 canonical defaults). Cache as `<custom_labels>` keyed by id, so when a rule's `target_custom_label_id` fires you can resolve to a `gmail_label_id` + `archive_on_apply` / `mark_read_on_apply` flags.
+
+If either request 4xxs, log a one-line note and continue with empty arrays — rules + custom labels are augmentation, not blockers.
+
 ## Phase 1 — Pull the inbox
 
 `POST <backend_url>/api/mcp/gmail/list_inbox` with body:
@@ -99,6 +122,8 @@ Response shape:
 
 If `threads` is empty, tell the user "Nothing in your inbox to triage — all clear." and stop.
 
+**Note whether there's more:** if `next_page_token` is non-null, there are more than 50 threads waiting. Remember this for the Phase 6 summary so you can prompt the user to run triage again.
+
 ## Phase 2 — Look up senders against contacts
 
 For each thread, parse the sender email out of the `from` field (e.g. `Sarah Khan <sarah@acme.com>` → `sarah@acme.com`). Then for the unique senders, batch-look-up against the user's contacts:
@@ -115,9 +140,38 @@ Use this to enrich each thread with sender context for display:
 
 This context is for HUMAN reading in Phase 4 — it doesn't change classification rules in Phase 3. But it should bias the user's review (an "action required" item from a known prospect is higher-stakes than from an unknown sender).
 
-## Phase 3 — AI-categorise each thread (model-side, in this session)
+## Phase 3 — Classify each thread
 
-For each thread, classify into ONE of four buckets based on `subject`, `from`, `snippet`, and `label_ids`. **Use only the data we already have — DO NOT call `get_thread` for bodies.** Triage runs on metadata; per-thread body reads happen later (in `draft-reply` or `surface-followups`) when the user picks one to action.
+Three passes, in order. The first pass that yields a target wins; later passes don't run for that thread.
+
+### Pass A — User-taught rules (deterministic, free, fast)
+
+For each thread, evaluate the cached `<rules>` from Step 0e in order (already priority-sorted). Each rule has `pattern_type` (`sender_email` / `sender_domain` / `subject_keyword` / `snippet_keyword` / `current_label`) and `pattern_value` — match the thread's `from` / `subject` / `snippet` / cross-referenced canonical labels (derived from `label_ids` via the label config map).
+
+Match logic (mirrors backend `TriageRuleEngine` — keep them in sync):
+- `sender_email` → exact match against the thread's parsed sender email (lowercased both sides).
+- `sender_domain` → exact match against the part after `@` (lowercased).
+- `subject_keyword` → case-insensitive substring of `subject`.
+- `snippet_keyword` → case-insensitive substring of `snippet`.
+- `current_label` → the canonical name (e.g. `awaiting_reply`) appears in the thread's currently-applied HHQ canonical labels.
+
+On first match, the rule's target is the bucket. The target is either:
+- `target_canonical` → one of the 5 canonical buckets (apply per the same rules in Pass C below).
+- `target_custom_label_id` → look up in `<custom_labels>`, get `display_name`, `gmail_label_id`, `archive_on_apply`, `mark_read_on_apply`. Apply that label per its flags.
+
+Track which rule fired for which thread so the Phase 5 summary can show "(rule: from @stripe.com → Notifications)" when relevant.
+
+### Pass B — Pre-classification override: Awaiting Reply → To Do on inbound
+
+Before falling through to AI, check if the thread is currently labelled `awaiting_reply` (the user's `gmail_label_id` for that bucket from `/api/me/gmail/labels/config`) AND there is a new inbound message — i.e. the thread is back in `INBOX` (the `INBOX` label is present in `label_ids`, which only happens when Gmail re-delivers a thread on a new reply) — then classify as `to_do` regardless of subject/snippet patterns. The other party has replied; the ball is back in the user's court.
+
+In Phase 5, this means *removing* the `awaiting_reply` label and *adding* `to_do` (plus *adding* `INBOX` is implicit — the thread's already there). Skip the `archive_on_apply` for `to_do` (it stays in inbox by design).
+
+If the thread is `awaiting_reply` but NOT in `INBOX` (i.e. nothing new has come in), leave it alone — don't reclassify, don't surface it in the triage list. It's correctly archived and waiting.
+
+### Pass C — AI classification (only for unmatched threads)
+
+For threads that didn't match a rule and didn't trigger the awaiting-reply override, classify into ONE of the 5 canonical buckets based on `subject`, `from`, `snippet`, and `label_ids`. **Use only the data we already have — DO NOT call `get_thread` for bodies.** Triage runs on metadata; per-thread body reads happen later (in `draft-reply` or `surface-followups`) when the user picks one to action.
 
 ### Buckets (5-label flow)
 
@@ -143,7 +197,7 @@ Signal patterns: From `noreply@` / `no-reply@` / `notifications@` / `system@`, p
 Subscription / marketing — should mostly be auto-handled by the background sync (List-Unsubscribe header detection), but catches any without that header.
 Signal patterns: "Your weekly digest", "Update from <brand>", marketing language, footers mentioning unsubscribe even when no header present.
 
-### Disambiguation rules
+### Disambiguation rules (within Pass C)
 
 - If unsure between `to_do` and `fyi`: prefer `to_do` for unknown senders (safer false positive), prefer `fyi` for known low-stakes senders (CCs from your own team about non-actioned items, etc.).
 - If from a known **prospect** in active pipeline stage AND looks like substantive content: at minimum `to_do`. Never `notifications` or `newsletters` even if pattern would match.
@@ -246,6 +300,30 @@ Conversational mode. The user can say:
 
 Accept changes, re-render the updated list, ask "Apply now? (yes / no / more changes)".
 
+#### Capture rules conversationally
+
+If a user's edit looks like a *general pattern* rather than a one-off — phrasing like "always", "any", "all", "every time", "from now on", "going forward", "anything from `<sender or domain>`", "any `<keyword>` ones" — offer to save it as a triage rule so it applies automatically next run.
+
+Examples:
+- "Move all missed payment ones to To Be Paid" → propose saving rule `subject_keyword: missed payment` → custom label `To Be Paid`. If `To Be Paid` doesn't exist as a custom label, offer to create it (`POST /api/me/gmail/labels/custom` with `display_name: "To Be Paid"` — backend namespaces under `HHQ/`), then create the rule.
+- "Anything from @stripe.com is a notification" → propose `sender_domain: stripe.com` → canonical `notifications`.
+- "Move Sarah's emails to To Do" (and Sarah is a known contact) → propose `sender_email: sarah@acme.com` → canonical `to_do`.
+- "Archive any newsletter from substack" → propose `sender_domain: substack.com` → canonical `newsletters`.
+
+Ask once before saving:
+> "Want to save this as a rule? Next time it'll apply automatically. (yes / no / yes but tweak it first)"
+
+If yes:
+1. If a custom target label is needed and doesn't exist yet, `POST /api/me/gmail/labels/custom` to create it (the backend creates the Gmail-side label too).
+2. `POST /api/me/triage-rules` with `pattern_type`, `pattern_value`, target (`target_canonical` OR `target_custom_label_id`), and `captured_from_skill: true` so we know it came from this conversational flow.
+3. Apply the rule's effect to the current bucket as the user requested, then continue with the rest of the apply step.
+
+If "tweak", let the user adjust the pattern (e.g. "actually make it `subject_keyword: payment overdue` instead") then save.
+
+If no, just apply this one as a one-off.
+
+Don't ask on a one-off edit ("move *this* email to FYI" — singular, no general pattern). Only ask when the user's phrasing implies a recurring rule.
+
 ## Phase 6 — Report what was done
 
 After the actions complete, brief summary:
@@ -261,6 +339,10 @@ After the actions complete, brief summary:
 > Your inbox now shows the 12 items that need you. Open Gmail to action them."
 
 Use the user's display_name for each label in the summary.
+
+**If `next_page_token` was non-null in Phase 1** (more than 50 threads in inbox), append a follow-up nudge:
+
+> "Heads up — your inbox had more than 50 threads. Run `/hhq:triage-inbox` again to clear the next batch."
 
 If any action failed (e.g. Gmail API error on a specific thread), report it honestly:
 > "Heads up: failed to apply HHQ/To Do to 1 thread (Gmail returned 404 — it may have been deleted in another tab). The other 11 applied cleanly."
