@@ -109,7 +109,7 @@ Write `<project-dir>/.hhq-session.json`:
 }
 ```
 
-Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh / re-activate.
+Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh or activate.
 
 ## Phase 5 — List campaigns and pin
 
@@ -160,7 +160,7 @@ Stop.
 ## Things you must NOT do
 
 - Do NOT touch `~/.hhq/`. Sessions live per-project at `<project-dir>/.hhq-session.json`. There is no shared per-machine auth file in v0.11+.
-- Do NOT auto-re-activate when a token refresh fails. The session may have been released by the user from `/sessions` — silently re-activating would consume a new slot. Tell the user to `/hhq:connect` explicitly.
+- Do NOT generate a fresh session UUID as a recovery path elsewhere. This skill is the ONLY place that mints new UUIDs (alongside `/hhq:onboard`). Other skills auto-recover from `session_revoked` / `invalid_token` by calling `/api/activate` with the **existing** `session_id` from `.hhq-session.json` — that's idempotent and doesn't burn a slot. A fresh UUID does.
 - Do NOT prompt for offer / ICP / voice / signals. Those questions belong in `/hhq:onboard` (first-timer) or `/hhq:new-campaign` (additional campaigns).
 - Do NOT log the licence key, JWT, or full session-file contents in chat output. The truncated `<first 4>...<last 4>` form in Phase 1 is the only exception, used to confirm identity.
 - Do NOT modify `<project-dir>/.hhq-campaign.json` until activation has succeeded — partial state is worse than no state.

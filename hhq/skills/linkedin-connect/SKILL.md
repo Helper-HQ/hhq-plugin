@@ -42,11 +42,19 @@ Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 - **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming. Continue.
 - **Neither found** → "No auth — say `/hhq:connect` to link this project (or `/hhq:onboard` if you're brand-new)." Stop.
 
-If `jwt_expires_at` is past or within 60s of expiry:
-1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
-2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop.
+If `jwt_expires_at` is past or within 60s of expiry, proactively refresh: POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>` (the endpoint accepts expired tokens). Save the new `jwt` + `jwt_expires_at` to `.hhq-session.json` (preserving other fields).
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
+
+**On 401 from any API call below**, read `error.code` from the response body and recover ONCE:
+
+- `token_expired` → POST `<backend_url>/api/refresh` with the current JWT. Save new JWT. Retry the original call.
+- `session_revoked` or `invalid_token` → POST `<backend_url>/api/activate` with the **existing `session_id` + `license_key` from `.hhq-session.json`** (NOT a fresh UUID — reusing the same UUID keeps this idempotent and avoids burning a slot). Save new JWT. Tell the user: *"Your session for this project had been released — I've re-established it. If that wasn't intentional, release it again from `/sessions` and close this chat."* Retry.
+- `license_inactive` → tell the user to contact `help@helperhq.co`. Stop.
+
+**On 403 during recovery** relay the backend's `error.message` verbatim and stop (`session_limit_reached` includes the `/sessions` URL).
+
+**On a second 401** of the same call after recovery, surface honestly and stop. Never loop. Never generate a fresh session UUID — only `/hhq:connect` and `/hhq:onboard` mint new UUIDs.
 
 ### Step 0c — Verify Chrome connector is loaded
 

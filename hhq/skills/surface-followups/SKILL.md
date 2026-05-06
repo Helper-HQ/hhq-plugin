@@ -37,11 +37,19 @@ Read `<project-dir>/.hhq-session.json`.
 - **Not found, but legacy `<project-dir>/.hhq-auth.json` exists** → migrate by renaming. Continue.
 - **Neither found** → "This project isn't connected to Helper HQ — say `/hhq:connect` to link it (or `/hhq:onboard` if you're brand-new)." Stop.
 
-If `jwt_expires_at` is past or within 60s of expiry:
-1. POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at.
-2. On 401, tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop.
+If `jwt_expires_at` is past or within 60s of expiry, proactively refresh: POST `<backend_url>/api/refresh` with `Authorization: Bearer <old jwt>` (the endpoint accepts expired tokens). Save the new `jwt` + `jwt_expires_at` to `.hhq-session.json` (preserving other fields).
 
 All API calls below use `Authorization: Bearer <jwt>` and `curl -sk`. Never log the JWT or licence key.
+
+**On 401 from any API call below**, read `error.code` from the response body and recover ONCE:
+
+- `token_expired` → POST `<backend_url>/api/refresh` with the current JWT. Save new JWT. Retry the original call.
+- `session_revoked` or `invalid_token` → POST `<backend_url>/api/activate` with the **existing `session_id` + `license_key` from `.hhq-session.json`** (NOT a fresh UUID — reusing the same UUID keeps this idempotent and avoids burning a slot). Save new JWT. Tell the user: *"Your session for this project had been released — I've re-established it. If that wasn't intentional, release it again from `/sessions` and close this chat."* Retry.
+- `license_inactive` → tell the user to contact `help@helperhq.co`. Stop.
+
+**On 403 during recovery** relay the backend's `error.message` verbatim and stop (`session_limit_reached` includes the `/sessions` URL).
+
+**On a second 401** of the same call after recovery, surface honestly and stop. Never loop. Never generate a fresh session UUID — only `/hhq:connect` and `/hhq:onboard` mint new UUIDs.
 
 ### Step 0c — Resolve current campaign
 
@@ -75,6 +83,8 @@ The Chrome connector for LinkedIn is optional — only needed if any picked foll
 
 ## Phase 1 — Auto-refresh inbox
 
+### Step 1a — Sync Gmail
+
 Run the `sync-gmail` skill inline. Stays header-only. Takes ~10-30s. The point is the queue you're about to compute reflects today's reality, not whatever last sync caught.
 
 If sync-gmail returns an error or partial result, surface it briefly and ask whether to continue with stale state:
@@ -82,6 +92,23 @@ If sync-gmail returns an error or partial result, surface it briefly and ask whe
 > "Gmail sync hit a snag (`<error>`). Continue with the queue as it stands? Some recent replies might be missing."
 
 If the user says no, stop. If yes, continue.
+
+### Step 1b — Sync LinkedIn DMs (if Chrome is loaded and watermark is stale)
+
+LinkedIn-only conversations don't surface accurately in the queue unless someone has recently walked the messaging inbox. To keep the queue honest without scraping LinkedIn on every follow-ups loop:
+
+1. **Check Chrome connector availability.** Look for `mcp__Claude_in_Chrome__navigate` / `read_page` in this session's tools. If not loaded, skip this step entirely (no warning — the user may simply prefer not to use LinkedIn from here).
+
+2. **Check the watermark.** GET `<backend_url>/api/me/linkedin-dm-sync-state`.
+
+3. **Decide:**
+   - `last_synced_at` is null → first run; the user hasn't walked LinkedIn yet. Ask: *"Want me to also walk your LinkedIn DMs first? First-run goes back 6 months, takes 10-15 min. (yes / skip)"* — if they say skip, do nothing for now and move on.
+   - `last_synced_at` is older than 12 hours → stale; trigger `sync-linkedin-dms` inline with the default 30-day window. Don't ask — silent pre-flight, the watermark gate already keeps this from running every loop.
+   - `last_synced_at` is within the last 12 hours → fresh enough; skip silently.
+
+4. If `sync-linkedin-dms` errors or hits a rate-limit, surface briefly: *"LinkedIn sync hit a snag — continuing with the queue as it stands. LinkedIn-only follow-ups may be slightly stale."* Continue.
+
+The point of the 12-hour gate is per-day rate-limit safety — running `sync-linkedin-dms` every time the user opens the follow-ups loop would hammer LinkedIn enough to risk a soft block.
 
 ## Phase 2 — Fetch the queue
 
