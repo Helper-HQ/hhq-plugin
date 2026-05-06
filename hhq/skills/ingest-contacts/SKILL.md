@@ -37,13 +37,19 @@ Read `<project-dir>/.hhq-session.json` (per-project session auth, v0.11+).
 
 If `jwt_expires_at` is in the future and more than 60 seconds away → use `jwt` as the bearer for API calls.
 
-If `jwt_expires_at` has passed (or is within 60 seconds of expiry):
-1. Refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>`. On 200, save the new token + expires_at to `.hhq-session.json` (preserving other fields).
-2. On 401, the session may have been released — tell the user: "Your session was released — say `/hhq:connect` to re-link this project." Stop. Do NOT auto-re-activate.
+If `jwt_expires_at` has passed (or is within 60 seconds of expiry), proactively refresh: `POST <backend_url>/api/refresh` with header `Authorization: Bearer <old jwt>` (the endpoint accepts expired tokens). Save the new `jwt` + `jwt_expires_at` to `.hhq-session.json` (preserving other fields).
 
-All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk`.
+All API calls below include `Authorization: Bearer <jwt>`. Use `curl -sk`. Never log the JWT or licence key in chat output.
 
-Never log the JWT or licence key in chat output.
+**On 401 from any API call below**, read `error.code` from the response body and recover ONCE:
+
+- `token_expired` → POST `<backend_url>/api/refresh` with the current JWT. Save new JWT. Retry the original call.
+- `session_revoked` or `invalid_token` → POST `<backend_url>/api/activate` with the **existing `session_id` + `license_key` from `.hhq-session.json`** (NOT a fresh UUID — reusing the same UUID keeps this idempotent and avoids burning a slot). Save new JWT. Tell the user: *"Your session for this project had been released — I've re-established it. If that wasn't intentional, release it again from `/sessions` and close this chat."* Retry.
+- `license_inactive` → tell the user to contact `help@helperhq.co`. Stop.
+
+**On 403 during recovery** relay the backend's `error.message` verbatim and stop (`session_limit_reached` includes the `/sessions` URL).
+
+**On a second 401** of the same call after recovery, surface honestly and stop. Never loop. Never generate a fresh session UUID — only `/hhq:connect` and `/hhq:onboard` mint new UUIDs.
 
 Note: contacts are **user-level master data** shared across all campaigns — this skill imports into the master pool. Per-campaign state (status, last_surfaced_at, research, messages) is created lazily as surface-next-5 / research-and-draft run within a specific campaign.
 
@@ -630,7 +636,7 @@ For card-scan imports, expect `review_count` to occasionally be non-zero — a c
 
 ## Error handling (all branches)
 
-- **HTTP 401** → token wasn't accepted. Run the refresh / re-activate flow from Phase 0 once, then retry. If the second try also fails, tell the user their session is broken and to re-onboard.
+- **HTTP 401** → run the canonical token-recovery dispatch from Phase 0 (read `error.code`, refresh or activate-with-existing-UUID accordingly), then retry once. If the second try also fails, surface honestly and stop.
 - **HTTP 422** → validation errors. The error body has `errors.contacts.{idx}.{field}` or `errors.messages.{idx}.{field}`. Tell the user honestly: "N rows had problems and weren't imported (e.g. row 12: missing linkedin_url). The rest went through if any." Show the first 2-3 indices and fields. Don't dump the whole error.
 - **HTTP 5xx / network** → tell the user the backend's not responding, suggest retry in a moment. Don't keep retrying automatically.
 

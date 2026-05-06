@@ -127,7 +127,19 @@ Write `<project-dir>/.hhq-session.json`:
 }
 ```
 
-Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh/re-activation.
+Update `tier`, `helpers`, `jwt`, `jwt_expires_at` on every successful refresh or activate.
+
+### Step 0e.1 — Canonical 401 recovery (applies to every API call in later phases)
+
+**On 401 from any API call below**, read `error.code` from the response body and recover ONCE:
+
+- `token_expired` → POST `<backend_url>/api/refresh` with the current JWT. Save new JWT. Retry the original call.
+- `session_revoked` or `invalid_token` → POST `<backend_url>/api/activate` with the **existing `session_id` + `license_key` from `.hhq-session.json`** (NOT a fresh UUID — reusing the same UUID keeps this idempotent and avoids burning a slot). Save new JWT. Tell the user: *"Your session for this project had been released — I've re-established it. If that wasn't intentional, release it again from `/sessions` and close this chat."* Retry.
+- `license_inactive` → tell the user to contact `help@helperhq.co`. Stop.
+
+**On 403 during recovery** relay the backend's `error.message` verbatim and stop (`session_limit_reached` includes the `/sessions` URL).
+
+**On a second 401** of the same call after recovery, surface honestly and stop. Never loop. The fresh-UUID activate above (Step 0d) is the ONLY place in this skill that mints a new session UUID — recovery always reuses the existing one.
 
 Also write `<project-dir>/.hhq-campaign.json`:
 

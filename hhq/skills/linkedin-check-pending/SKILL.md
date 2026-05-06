@@ -26,7 +26,7 @@ Do NOT trigger if the user wants to *send* requests (use `/hhq:linkedin-connect`
 Same as `linkedin-connect` Steps 0a–0d:
 
 - 0a — `mcp__ccd_directory__request_directory` for `<project-dir>`.
-- 0b — Read `<project-dir>/.hhq-session.json`, refresh JWT if expiring within 60s.
+- 0b — Read `<project-dir>/.hhq-session.json`, refresh JWT if expiring within 60s. **Use the same canonical 401-recovery dispatch as `linkedin-connect` Step 0b** (token_expired → refresh; session_revoked / invalid_token → re-activate with the **existing** `session_id` from the file, NOT a fresh UUID; license_inactive → contact support; 403 from recovery → relay verbatim and stop).
 - 0c — Verify Chrome connector is loaded; halt if not.
 - 0d — Navigate to `https://www.linkedin.com/feed/` to verify logged in; halt if not.
 
