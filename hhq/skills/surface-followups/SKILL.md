@@ -1,13 +1,13 @@
 ---
 name: surface-followups
-description: On-demand follow-ups loop — campaign-scoped. Triggers when the user says "who do I need to follow up with", "give me my follow-ups", "follow-ups for today", "who's waiting on me", "let's do follow-ups", or invokes /hhq:followups. Resolves the active campaign from `<project-dir>/.hhq-campaign.json`, auto-runs `sync-gmail` first to refresh inbox state (header-only, ~10-30s), then GETs `/api/me/campaigns/{slug}/followups` for a metadata-ranked queue of up to 10 (manual reminders due, ball-in-your-court, stale-your-court, going cold). Shows the queue with one-line reasoning per entry. User picks one to process — skill live-reads the Gmail thread (bodies in context, never persisted), distils 3-6 dated bullets, regenerates the user-level contact dossier from existing-dossier + new-bullets, drafts a reply in the user's voice referencing the conversation, shows everything for review (keep/edit dossier, keep/edit bullets, keep/edit/discard draft, snooze, mark handled, skip), persists what's confirmed (bullets to `campaign_contacts.conversation_notes`, dossier to `contacts.contact_profile`, draft to `campaign_contacts.draft_message`), then pushes the draft to Gmail as a reply-in-thread via the connector's `create_draft`. User opens Gmail to do a final pass and hit send. Loops back to queue. LinkedIn DMs handled via Chrome connector live-read with copy-paste output (no draft API). Run AFTER onboard-helperhq and at least one sync-gmail.
+description: On-demand follow-ups loop — campaign-scoped. Triggers when the user says "who do I need to follow up with", "give me my follow-ups", "follow-ups for today", "who's waiting on me", "let's do follow-ups", or invokes /hhq:followups. Resolves the active campaign from `<project-dir>/.hhq-campaign.json`, auto-runs `sync-gmail`, `sync-linkedin-dms`, and `sync-whatsapp` pre-flights to refresh inbox state across all three channels (each is header-only, watermark-gated against re-running too often), then GETs `/api/me/campaigns/{slug}/followups` for a metadata-ranked queue of up to 10 (manual reminders due, ball-in-your-court, stale-your-court, going cold). Shows the queue with one-line reasoning per entry. User picks one to process — skill routes to the right channel based on the queue payload's `last_inbound_via` / `last_outbound_via` (gmail / linkedin / whatsapp), live-reads the thread (bodies in context, never persisted), distils 3-6 dated bullets, regenerates the user-level contact dossier, drafts a reply in the user's voice, shows everything for review, persists what's confirmed. Gmail gets a draft pushed to the user's Gmail; LinkedIn DMs and WhatsApp threads get copy-paste output (no draft API for either). Run AFTER onboard-helperhq and at least one sync-gmail.
 ---
 
 # Surface Follow-ups — Sales Helper Lite
 
 You are working through the user's daily follow-up queue — the people in active conversation who are waiting on a reply, going stale, or have a manual reminder due. Unlike `surface-next-5` (capped daily allowance for cold outreach), follow-ups are reactive: if 8 people are waiting on the user, the user works through 8.
 
-**Privacy invariant — read this first.** When live-reading Gmail or LinkedIn message bodies during the per-pick processing step, those bodies enter your context for drafting and bullet extraction only. **Never persist message bodies.** Bullets and dossier text are derived data and ARE persisted; raw bodies are dropped at the end of each per-pick step. If the user asks to see "the original email" or "what they actually said", refuse and direct them to Gmail / LinkedIn.
+**Privacy invariant — read this first.** When live-reading Gmail, LinkedIn, or WhatsApp message bodies during the per-pick processing step, those bodies enter your context for drafting and bullet extraction only. **Never persist message bodies.** Bullets and dossier text are derived data and ARE persisted; raw bodies are dropped at the end of each per-pick step. If the user asks to see "the original message" or "what they actually said", refuse and direct them to the source app.
 
 ## When this skill runs
 
@@ -110,6 +110,25 @@ LinkedIn-only conversations don't surface accurately in the queue unless someone
 
 The point of the 12-hour gate is per-day rate-limit safety — running `sync-linkedin-dms` every time the user opens the follow-ups loop would hammer LinkedIn enough to risk a soft block.
 
+### Step 1c — Sync WhatsApp (if Chrome is loaded and watermark is stale)
+
+WhatsApp-only conversations follow the same pattern as LinkedIn — without a recent walk, the queue won't reflect today's activity for WhatsApp-active contacts. Use the same Chrome-availability + 12-hour watermark gate:
+
+1. **Check Chrome connector availability.** If `mcp__Claude_in_Chrome__navigate` / `read_page` aren't loaded, skip this step entirely. (No warning — Chrome may already be busy with LinkedIn or simply not installed.)
+
+2. **Check the watermark.** GET `<backend_url>/api/me/whatsapp-dm-sync-state`.
+
+3. **Decide:**
+   - `last_synced_at` is null → first run. Ask: *"Want me to also walk your WhatsApp Web inbox first? First-run goes back 6 months, takes 15-20 min — WhatsApp is touchier than LinkedIn about automation, so I pace it slower. (yes / skip)"* — if they say skip, do nothing for now and move on.
+   - `last_synced_at` is older than 12 hours → stale; trigger `sync-whatsapp` inline with the default 30-day window. Silent pre-flight.
+   - `last_synced_at` is within the last 12 hours → fresh enough; skip silently.
+
+4. If `sync-whatsapp` errors or hits a soft block, surface briefly: *"WhatsApp sync hit a snag — continuing with the queue as it stands. WhatsApp-only follow-ups may be slightly stale."* Continue.
+
+The 12-hour gate matters more here than for LinkedIn — WhatsApp Web flags automation aggressively. Don't run it more than necessary.
+
+If both LinkedIn and WhatsApp pre-flights would fire on the same loop and they share the Chrome connector, run them sequentially with a 5-second pause between, not in parallel.
+
 ## Phase 2 — Fetch the queue
 
 `GET <backend_url>/api/me/campaigns/<campaign_slug>/followups?limit=10&offset=0`
@@ -128,11 +147,14 @@ Returns:
       "company": "Acme",
       "position": "VP of Sales",
       "email": "sarah@acme.com",
+      "primary_phone": "+61400123456",
       "linkedin_url": "https://...",
       "pipeline_stage": {"id": 5, "slug": "in_conversation", "name": "In conversation"},
       "campaign_status": "drafted",
       "last_messaged_at": "2026-05-01T...",
       "last_contacted_at": "2026-04-28T...",
+      "last_inbound_via": "whatsapp",
+      "last_outbound_via": "gmail",
       "message_count": 12,
       "next_followup_due_at": null,
       "has_draft": false,
@@ -199,11 +221,22 @@ For the picked contact:
 
 ### Step 4a — Identify the conversation source
 
-Use the contact's `email` and `linkedin_url`:
+The queue payload now carries `last_inbound_via` and `last_outbound_via` — set by whichever sync source last moved the timestamps (`gmail`, `linkedin`, `whatsapp`, `manual_touch`, or null for legacy rows). Use the via field that matches the pick's tier:
 
-- If `email` is set, the conversation is most likely Gmail — proceed with Gmail thread search.
-- If `email` is empty but `linkedin_url` is set, this is a LinkedIn-DM-only conversation — skip to LinkedIn branch (Step 4b-LI).
-- If both are set, default to Gmail (the more common case for active conversations).
+- **`tier == 1` (manual reminder due)** — no specific thread; the reminder might be about anything. Prefer whichever via is more recent (use `last_inbound_via` if `last_messaged_at >= last_contacted_at`, else `last_outbound_via`). Ask the user if it's unclear: *"Heads-up — this is a manual reminder, not a specific thread. Want me to open the most recent channel (`<via>`) or skip the read and just draft from bullets?"*
+- **`tier == 2` (ball in your court)** — they messaged you → use `last_inbound_via` (the channel they messaged from).
+- **`tier == 3` (stale, your court)** — you messaged them → use `last_outbound_via` (the channel you used).
+- **`tier == 4` (going cold)** — prefer `last_inbound_via`, fall back to `last_outbound_via`.
+
+Once the via channel is chosen, branch:
+
+- `via == "gmail"` (or null + `email` present) → Step 4b-Gmail.
+- `via == "linkedin"` (or null + only `linkedin_url`) → Step 4b-LI.
+- `via == "whatsapp"` → Step 4b-WA.
+- `via == "manual_touch"` → no thread to read; jump straight to bullets-only drafting in Step 4e. The bullets you'll see in `recent_bullets` already capture what was discussed.
+- Nothing usable → fall back to the legacy heuristic (`email` → Gmail; `linkedin_url` only → LinkedIn; phones only → WhatsApp; nothing → bullets-only).
+
+**Important:** the via fields are stamped only on activity that landed *after* v0.27. Older contacts have null via and the legacy heuristic (email → Gmail) applies. That's fine — most active follow-ups will have synced at least once since v0.27.
 
 ### Step 4b-Gmail — Live-read the Gmail thread
 
@@ -256,6 +289,32 @@ Check if a Chrome connector is loaded (look for tools like `navigate`, `read_pag
 
 If Chrome IS loaded, navigate to the LinkedIn message thread for this contact and read the visible messages. Note: no `thread_id` to capture — LinkedIn drafts will be copy-paste output in Step 4g.
 
+### Step 4b-WA — Live-read WhatsApp Web
+
+Check if a Chrome connector is loaded. If not:
+
+> "I'd need the Chrome connector to read your WhatsApp thread with `<contact name>`. Without it I can draft from the conversation bullets you already have on file, but I can't see what's been said since the last time we updated. Continue with bullets only? (yes / no)"
+
+If Chrome IS loaded:
+
+1. **Navigate to** `https://web.whatsapp.com/`. Verify the chat list is visible (if you see the QR code, halt and tell the user to scan it in — same gate as `sync-whatsapp` Phase 0d).
+
+2. **Find the conversation.** Two paths depending on what the queue payload carried:
+   - **Has `primary_phone`** → use WhatsApp Web's search box. Click the search input at the top of the chat list, type the phone in international format (e.g. `+61 400 123 456`). The matching chat surfaces in the result list — click it. If no match, fall back to name search.
+   - **Has only `first_name` / `last_name`** (no phone, or phone search returned nothing) → search by full name (`first_name + " " + last_name`). If the user has the contact saved in their phone book, WhatsApp Web finds them by name.
+   - **Neither resolves** → tell the user:
+     > "Couldn't find a WhatsApp thread with `<contact name>`. Either they're not in your phone's address book, or the number/name doesn't line up. Want to skip and move on, or fall back to drafting from bullets only?"
+
+3. **Read the visible thread.** Use `mcp__Claude_in_Chrome__read_page` to capture the conversation pane. Read the most recent ~20 messages (whatever's visible without scrolling — WhatsApp loads progressively from the bottom). Each message shows: sender (you vs them, detected by message-bubble alignment + colour), timestamp (next to each bubble), body text. For media messages, treat as opaque ("[photo]", "[voice note]", "[video]") — don't try to extract content. **Read into your context for this per-pick step only — never persist body text.**
+
+4. **No `thread_id` to capture** — WhatsApp drafts are copy-paste output in Step 4g, same as LinkedIn.
+
+5. **Pace:** 2 seconds between any clicks. Don't scroll back through the thread history for V1 — the visible pane is enough for "what's the most recent activity" context.
+
+If WhatsApp Web shows a "checking for new messages" / sync overlay that doesn't clear within 30 seconds, halt that pick:
+
+> "WhatsApp Web is still syncing this thread on its side. Skip for now? I can come back to this one in a minute."
+
 ### Step 4c — Distil bullets
 
 From the live-read messages (and any new since the last bullet's `created_at`), produce 3-6 dated bullets. One bullet per concrete fact:
@@ -276,7 +335,7 @@ Bullet structure:
 }
 ```
 
-`source` is `gmail` for Gmail reads, `linkedin` for LinkedIn reads.
+`source` is `gmail` for Gmail reads, `linkedin` for LinkedIn reads, `whatsapp` for WhatsApp reads.
 
 Skip facts already covered in `recent_bullets` (avoid duplicates). If nothing new is in the thread since the last bullet date, you may produce zero bullets — that's fine.
 
@@ -358,7 +417,9 @@ When the user says "approve" (or after all edits resolved):
 
 5. **For LinkedIn conversations**: skip Step 4 — there's no LinkedIn draft API. Instead, output the draft as copy-paste content with a brief instruction: "Copy this into the LinkedIn thread with `<contact name>` and send when ready."
 
-6. **Update campaign_contact status**: `PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/<contact_slug>` with `{"status": "drafted"}` if current status is anything pre-drafted.
+6. **For WhatsApp conversations**: skip Step 4 — WhatsApp Web has no draft API either, and even if it did, we wouldn't want to autofill the compose box (WhatsApp Web is aggressive about flagging automated behaviour). Instead, output the draft as copy-paste content with a brief instruction: "Copy this into the WhatsApp thread with `<contact name>` and send when ready. The thread is already open in your browser — just paste and review."
+
+7. **Update campaign_contact status**: `PUT <backend_url>/api/me/campaigns/<campaign_slug>/contacts/<contact_slug>` with `{"status": "drafted"}` if current status is anything pre-drafted.
 
 Then confirm to the user:
 
@@ -390,7 +451,8 @@ If the user wants to keep going, say "next" or pick another number.
 - Do NOT persist message body content. Bodies are read once into context for the per-pick step and discarded. Bullets and dossier text are the only derived artefacts saved.
 - Do NOT scan or summarise the user's full inbox. Only read threads for contacts the user has explicitly picked from the follow-ups queue.
 - Do NOT push to Gmail without `thread_id` set on `create_draft` — that creates a NEW thread, breaks conversational context, and looks unprofessional.
-- Do NOT send messages on the user's behalf. The whole point of the Gmail-draft handoff is that Gmail's UI is the last-mile review surface. Pushing a draft is fine; sending is not.
+- Do NOT send messages on the user's behalf on ANY channel — Gmail, LinkedIn, or WhatsApp. Pushing a draft to Gmail is fine; for LinkedIn and WhatsApp it's copy-paste only.
+- Do NOT type the draft text into WhatsApp Web's compose box programmatically, even if Chrome would let you. WhatsApp Web flags non-organic input patterns; output as copy-paste only.
 - Do NOT skip the `sync-gmail` auto-run in Phase 1 unless the user explicitly says "skip the sync, just show me what we have". Even then, warn that the queue may be stale.
 - Do NOT show the raw `tier` number to the user — translate it via the `reason` field which already explains the tier in plain language.
 - Do NOT cap the queue at 5. Follow-ups don't have a quality budget.
@@ -410,3 +472,8 @@ If the user wants to keep going, say "next" or pick another number.
 - **Contact has no `last_messaged_at` and no manual reminder, but appeared in the queue** → shouldn't happen with the backend's eligibility filter, but if it does, treat as "going cold" tier and proceed.
 - **Empty contact_profile AND empty research** → seed a minimal placeholder from headline + position + company on first regen, expand from bullets.
 - **Multiple Gmail threads with same contact** → pick the one with the most recent message activity. Don't merge across threads — they may be unrelated topics.
+- **`last_inbound_via` and `last_outbound_via` are both null** (legacy contact, never synced under v0.27+) → fall back to the heuristic (`email` present → Gmail; LinkedIn URL only → LinkedIn; phones only → WhatsApp). Once the next sync runs, the via fields get stamped and routing becomes deterministic.
+- **`last_inbound_via` and `last_outbound_via` disagree** (e.g. they messaged via WhatsApp, you replied via email) → use the via that matches the tier, per Step 4a. If the tier doesn't clearly map to one direction (e.g. "going cold"), prefer the more recent timestamp.
+- **WhatsApp Web search yields multiple chats with the same name** (rare — two contacts both saved as "Greg") → list the matches with the visible phone-number subtext from each result, ask the user to disambiguate. Don't guess.
+- **WhatsApp Web is logged out mid-loop** (QR-code screen suddenly appears — happens on long sessions) → halt that pick gracefully, tell the user to re-scan, offer to continue once they confirm.
+- **Chrome is busy with another tab** (e.g. user is on LinkedIn manually) → WhatsApp Web opens in a new tab; the navigate tool may not surface the existing tab. Use the navigate tool's default behaviour; if it fails, surface honestly and skip the pick.
